@@ -1,0 +1,22 @@
+# Godot 4
+.godot/
+.import/
+export.cfg
+export_presets.cfg
+
+# Godot executable bundles kept locally for development.
+Godot_*.exe
+Godot_*.zip
+
+# Builds and local output
+builds/
+exports/
+*.pck
+*.exe
+*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
