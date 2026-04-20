@@ -15,6 +15,7 @@ const SURVIVOR_BOW_DAMAGE := 10.0
 const SURVIVOR_MELEE_DAMAGE := 16.0
 const SURVIVOR_BOW_COOLDOWN := 0.9
 const SURVIVOR_MELEE_COOLDOWN := 0.55
+const MANUAL_COMMAND_GRACE := 2.5
 const STARTING_WALL_RADIUS := 250.0
 const DAY_ROAMER_MIN_DISTANCE := 920.0
 const DAY_CAMP_AGGRO_DISTANCE := 190.0
@@ -224,6 +225,7 @@ func _spawn_initial_camp(survivor_count: int) -> void:
 			"carry": 0,
 			"work_timer": 0.0,
 			"weapon": "bow",
+			"command_lock": 0.0,
 		})
 
 func _spawn_starting_perimeter() -> void:
@@ -401,6 +403,7 @@ func _update_survivors(delta: float) -> void:
 				selected_survivor = -1
 			survivors.remove_at(i)
 			continue
+		s["command_lock"] = max(0.0, float(s.get("command_lock", 0.0)) - delta)
 
 		if s["task"] == "gather" and phase == "day":
 			_process_gather_task(s, delta)
@@ -408,7 +411,8 @@ func _update_survivors(delta: float) -> void:
 			_process_attack_task(s, delta)
 		else:
 			_move_survivor_toward(s, s["target"], delta)
-			_auto_attack_nearest_zombie(s, delta)
+			if s["task"] == "idle" or (phase == "night" and float(s["command_lock"]) <= 0.0):
+				_auto_attack_nearest_zombie(s, delta)
 
 		survivors[i] = s
 
@@ -416,6 +420,7 @@ func _process_gather_task(s: Dictionary, delta: float) -> void:
 	var resource_index: int = int(s["resource"])
 	if resource_index < 0 or resource_index >= resources.size():
 		s["task"] = "idle"
+		s["command_lock"] = 0.0
 		return
 	var r: Dictionary = resources[resource_index]
 	_move_survivor_toward(s, r["pos"], delta)
@@ -432,11 +437,13 @@ func _process_gather_task(s: Dictionary, delta: float) -> void:
 				resources.remove_at(resource_index)
 				s["task"] = "idle"
 				s["resource"] = -1
+				s["command_lock"] = 0.0
 
 func _process_attack_task(s: Dictionary, delta: float) -> void:
 	var enemy_index: int = int(s["attack"])
 	if enemy_index < 0 or enemy_index >= zombies.size():
 		s["task"] = "idle"
+		s["command_lock"] = 0.0
 		return
 	var z := zombies[enemy_index]
 	var distance: float = s["pos"].distance_to(z["pos"])
@@ -664,13 +671,22 @@ func _handle_right_click(world_pos: Vector2) -> void:
 		survivors[selected_survivor]["task"] = "gather"
 		survivors[selected_survivor]["resource"] = resource_index
 		survivors[selected_survivor]["work_timer"] = 0.0
+		survivors[selected_survivor]["command_lock"] = MANUAL_COMMAND_GRACE
+		_show_message("幸存者开始采集资源。", 2.0)
 	elif enemy_index != -1:
 		survivors[selected_survivor]["task"] = "attack"
 		survivors[selected_survivor]["attack"] = enemy_index
 		survivors[selected_survivor]["work_timer"] = 0.0
+		survivors[selected_survivor]["command_lock"] = 0.0
+		_show_message("幸存者攻击目标。", 2.0)
 	else:
 		survivors[selected_survivor]["task"] = "move"
 		survivors[selected_survivor]["target"] = world_pos
+		survivors[selected_survivor]["resource"] = -1
+		survivors[selected_survivor]["attack"] = -1
+		survivors[selected_survivor]["work_timer"] = 0.0
+		survivors[selected_survivor]["command_lock"] = MANUAL_COMMAND_GRACE
+		_show_message("幸存者移动到指定位置。", 2.0)
 
 func _set_build_mode(kind: String) -> void:
 	build_mode = kind
@@ -706,6 +722,7 @@ func _place_building(world_pos: Vector2) -> void:
 			"carry": 0,
 			"work_timer": 0.0,
 			"weapon": "bow",
+			"command_lock": 0.0,
 		})
 		_show_message("避难所接纳了一名新幸存者。", 4.0)
 
@@ -910,6 +927,11 @@ func _draw_ground() -> void:
 	draw_circle(Vector2.ZERO, CAMP_RADIUS, Color("#8bc34a"), false, 4.0)
 	draw_circle(Vector2.ZERO, STARTING_WALL_RADIUS, Color(0.55, 0.68, 0.36, 0.18))
 	draw_circle(Vector2.ZERO, STARTING_WALL_RADIUS, Color("#cddc39"), false, 3.0)
+	if phase == "night":
+		draw_circle(Vector2.ZERO, 430.0, Color(1.0, 0.78, 0.32, 0.24))
+		draw_circle(Vector2.ZERO, 270.0, Color(1.0, 0.91, 0.55, 0.22))
+		draw_circle(Vector2.ZERO, 76.0, Color(1.0, 0.84, 0.34, 0.42))
+		draw_circle(Vector2.ZERO, 430.0, Color("#ffca28"), false, 3.0)
 	draw_circle(Vector2.ZERO, 120.0, Color(0.85, 0.2, 0.16, 0.08))
 
 func _draw_resources() -> void:
