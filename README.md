@@ -20,7 +20,7 @@ The player builds a camp in one region, survives escalating night attacks, compl
 
 ## Prototype Loop
 
-Daytime is for gathering, building, healing, and expanding the camp inside the marked camp area. Nighttime spawns a zombie wave from a changing direction, with strength increasing by region and night. Towers rotate toward nearby zombies and fire automatically; survivors can gather by day and fight by night.
+Daytime is for gathering, building, healing, and expanding the camp inside the marked build area. Each region starts with a small walled camp and a basic watchtower, then the player expands from there. Wild zombies roam outside during the day and only attack when they get close to the camp, buildings, or survivors. Nighttime spawns larger zombie waves from all sides, with strength increasing by region and night. Towers rotate toward nearby zombies and fire automatically; survivors can gather by day and fight by night.
 
 ## Asset Credits
 

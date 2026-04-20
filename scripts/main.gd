@@ -8,9 +8,11 @@ const SURVIVOR_SPEED := 135.0
 const ZOMBIE_SPEED := 72.0
 const INTERACT_RANGE := 36.0
 const BUILD_GRID := 48.0
-const DAY_ROAMER_MIN_DISTANCE := 760.0
-const DAY_ROAMER_AGGRO_DISTANCE := 360.0
-const DAY_SURVIVOR_AGGRO_DISTANCE := 260.0
+const STARTING_WALL_RADIUS := 250.0
+const DAY_ROAMER_MIN_DISTANCE := 920.0
+const DAY_CAMP_AGGRO_DISTANCE := 190.0
+const DAY_BUILDING_AGGRO_DISTANCE := 120.0
+const DAY_SURVIVOR_AGGRO_DISTANCE := 170.0
 
 const RESOURCE_COLORS := {
 	"wood": Color("#5d8a45"),
@@ -190,6 +192,8 @@ func _start_region(index: int, survivor_count: int) -> void:
 
 func _spawn_initial_camp(survivor_count: int) -> void:
 	buildings.append(_make_building("core", Vector2.ZERO))
+	_spawn_starting_perimeter()
+	buildings.append(_make_building("tower", Vector2(0, -168)))
 	for i in survivor_count:
 		var angle: float = TAU * float(i) / max(1.0, float(survivor_count))
 		survivors.append({
@@ -203,6 +207,20 @@ func _spawn_initial_camp(survivor_count: int) -> void:
 			"carry": 0,
 			"work_timer": 0.0,
 		})
+
+func _spawn_starting_perimeter() -> void:
+	var wall_positions: Array[Vector2] = [
+		Vector2(-240, -240), Vector2(-192, -240), Vector2(-144, -240), Vector2(-96, -240), Vector2(-48, -240),
+		Vector2(48, -240), Vector2(96, -240), Vector2(144, -240), Vector2(192, -240), Vector2(240, -240),
+		Vector2(-240, 240), Vector2(-192, 240), Vector2(-144, 240), Vector2(-96, 240), Vector2(-48, 240),
+		Vector2(48, 240), Vector2(96, 240), Vector2(144, 240), Vector2(192, 240), Vector2(240, 240),
+		Vector2(-240, -192), Vector2(-240, -144), Vector2(-240, -96), Vector2(-240, -48), Vector2(-240, 0),
+		Vector2(-240, 48), Vector2(-240, 96), Vector2(-240, 144), Vector2(-240, 192),
+		Vector2(240, -192), Vector2(240, -144), Vector2(240, -96), Vector2(240, -48), Vector2(240, 0),
+		Vector2(240, 48), Vector2(240, 96), Vector2(240, 144), Vector2(240, 192),
+	]
+	for pos in wall_positions:
+		buildings.append(_make_building("wall", pos))
 
 func _make_building(kind: String, pos: Vector2) -> Dictionary:
 	if kind == "core":
@@ -243,7 +261,7 @@ func _spawn_resources() -> void:
 		})
 
 func _spawn_day_roamers() -> void:
-	var count: int = 8 + region_index * 4
+	var count: int = 7 + region_index * 3
 	for i in count:
 		_spawn_zombie(_random_direction(), false, true)
 
@@ -252,7 +270,7 @@ func _maintain_day_roamers() -> void:
 	for z in zombies:
 		if z.get("state", "attack") == "roam":
 			roaming_count += 1
-	var desired: int = 6 + region_index * 3
+	var desired: int = 5 + region_index * 2
 	while roaming_count < desired:
 		_spawn_zombie(_random_direction(), false, true)
 		roaming_count += 1
@@ -333,16 +351,16 @@ func _spawn_zombie(direction: String, from_wave := true, roaming := false) -> vo
 	var pos := Vector2.ZERO
 	match direction:
 		"north":
-			pos = Vector2(rng.randf_range(-MAP_HALF_SIZE.x, MAP_HALF_SIZE.x), -MAP_HALF_SIZE.y - 80.0)
+			pos = Vector2(rng.randf_range(-MAP_HALF_SIZE.x, MAP_HALF_SIZE.x), -MAP_HALF_SIZE.y - 120.0)
 		"south":
-			pos = Vector2(rng.randf_range(-MAP_HALF_SIZE.x, MAP_HALF_SIZE.x), MAP_HALF_SIZE.y + 80.0)
+			pos = Vector2(rng.randf_range(-MAP_HALF_SIZE.x, MAP_HALF_SIZE.x), MAP_HALF_SIZE.y + 120.0)
 		"east":
-			pos = Vector2(MAP_HALF_SIZE.x + 80.0, rng.randf_range(-MAP_HALF_SIZE.y, MAP_HALF_SIZE.y))
+			pos = Vector2(MAP_HALF_SIZE.x + 120.0, rng.randf_range(-MAP_HALF_SIZE.y, MAP_HALF_SIZE.y))
 		_:
-			pos = Vector2(-MAP_HALF_SIZE.x - 80.0, rng.randf_range(-MAP_HALF_SIZE.y, MAP_HALF_SIZE.y))
+			pos = Vector2(-MAP_HALF_SIZE.x - 120.0, rng.randf_range(-MAP_HALF_SIZE.y, MAP_HALF_SIZE.y))
 	if roaming:
-		var angle := rng.randf_range(0.0, TAU)
-		var distance := rng.randf_range(DAY_ROAMER_MIN_DISTANCE, min(MAP_HALF_SIZE.x, MAP_HALF_SIZE.y) - 90.0)
+		var angle: float = rng.randf_range(0.0, TAU)
+		var distance: float = rng.randf_range(DAY_ROAMER_MIN_DISTANCE, min(MAP_HALF_SIZE.x, MAP_HALF_SIZE.y) - 80.0)
 		pos = Vector2(cos(angle), sin(angle)) * distance
 	var threat: int = REGIONS[region_index]["threat"]
 	var hp := 45.0 + threat * 16.0 + nights_survived_in_region * 6.0
@@ -477,8 +495,11 @@ func _update_zombies(delta: float) -> void:
 		zombies[i] = z
 
 func _should_day_zombie_attack(z: Dictionary) -> bool:
-	if z["pos"].length() <= CAMP_RADIUS + DAY_ROAMER_AGGRO_DISTANCE:
+	if z["pos"].length() <= STARTING_WALL_RADIUS + DAY_CAMP_AGGRO_DISTANCE:
 		return true
+	for b in buildings:
+		if b["kind"] != "core" and z["pos"].distance_to(b["pos"]) <= DAY_BUILDING_AGGRO_DISTANCE:
+			return true
 	for s in survivors:
 		if z["pos"].distance_to(s["pos"]) <= DAY_SURVIVOR_AGGRO_DISTANCE:
 			return true
@@ -489,13 +510,16 @@ func _update_roaming_zombie(z: Dictionary, delta: float) -> void:
 	if z["pos"].distance_to(target) <= 24.0:
 		z["wander_target"] = _random_wander_target(z["pos"])
 		target = z["wander_target"]
+	if target.length() < DAY_ROAMER_MIN_DISTANCE:
+		z["wander_target"] = _random_wander_target(z["pos"])
+		target = z["wander_target"]
 	var direction: Vector2 = target - z["pos"]
 	if direction.length() > 1.0:
 		z["pos"] += direction.normalized() * (ZOMBIE_SPEED * 0.45) * delta
 
 func _random_wander_target(from_pos: Vector2) -> Vector2:
 	var angle: float = rng.randf_range(0.0, TAU)
-	var distance: float = rng.randf_range(DAY_ROAMER_MIN_DISTANCE, min(MAP_HALF_SIZE.x, MAP_HALF_SIZE.y) - 90.0)
+	var distance: float = rng.randf_range(DAY_ROAMER_MIN_DISTANCE, min(MAP_HALF_SIZE.x, MAP_HALF_SIZE.y) - 80.0)
 	var target: Vector2 = Vector2(cos(angle), sin(angle)) * distance
 	if target.distance_to(from_pos) < 180.0:
 		target += Vector2.RIGHT.rotated(angle + PI * 0.5) * 220.0
@@ -825,6 +849,8 @@ func _draw_ground() -> void:
 	draw_rect(Rect2(-MAP_HALF_SIZE, MAP_HALF_SIZE * 2.0), Color("#1b2a22"), false, 8.0)
 	draw_circle(Vector2.ZERO, CAMP_RADIUS, Color(0.18, 0.36, 0.28, 0.22))
 	draw_circle(Vector2.ZERO, CAMP_RADIUS, Color("#8bc34a"), false, 4.0)
+	draw_circle(Vector2.ZERO, STARTING_WALL_RADIUS, Color(0.55, 0.68, 0.36, 0.18))
+	draw_circle(Vector2.ZERO, STARTING_WALL_RADIUS, Color("#cddc39"), false, 3.0)
 	draw_circle(Vector2.ZERO, 120.0, Color(0.85, 0.2, 0.16, 0.08))
 
 func _draw_resources() -> void:
