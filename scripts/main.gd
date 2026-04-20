@@ -2,12 +2,15 @@ extends Node2D
 
 const MAP_HALF_SIZE := Vector2(1800.0, 1200.0)
 const CAMP_RADIUS := 560.0
-const DAY_SECONDS := 55.0
+const DAY_SECONDS := 38.0
 const NIGHT_SECONDS := 45.0
 const SURVIVOR_SPEED := 135.0
 const ZOMBIE_SPEED := 72.0
 const INTERACT_RANGE := 36.0
 const BUILD_GRID := 48.0
+const DAY_ROAMER_MIN_DISTANCE := 760.0
+const DAY_ROAMER_AGGRO_DISTANCE := 360.0
+const DAY_SURVIVOR_AGGRO_DISTANCE := 260.0
 
 const RESOURCE_COLORS := {
 	"wood": Color("#5d8a45"),
@@ -81,6 +84,7 @@ var day_count := 1
 var nights_survived_in_region := 0
 var region_index := 0
 var current_spawn_direction := "none"
+var current_spawn_directions: Array[String] = []
 var wave_spawned := 0
 var wave_target := 0
 var spawn_timer := 0.0
@@ -181,6 +185,7 @@ func _start_region(index: int, survivor_count: int) -> void:
 	build_mode = ""
 	_spawn_initial_camp(survivor_count)
 	_spawn_resources()
+	_spawn_day_roamers()
 	_show_message("抵达%s。白天收集物资和建设，夜晚守住营地核心。" % REGIONS[region_index]["name"], 6.0)
 
 func _spawn_initial_camp(survivor_count: int) -> void:
@@ -237,6 +242,21 @@ func _spawn_resources() -> void:
 			"amount": rng.randi_range(35, 70) + region_index * 12,
 		})
 
+func _spawn_day_roamers() -> void:
+	var count: int = 8 + region_index * 4
+	for i in count:
+		_spawn_zombie(_random_direction(), false, true)
+
+func _maintain_day_roamers() -> void:
+	var roaming_count: int = 0
+	for z in zombies:
+		if z.get("state", "attack") == "roam":
+			roaming_count += 1
+	var desired: int = 6 + region_index * 3
+	while roaming_count < desired:
+		_spawn_zombie(_random_direction(), false, true)
+		roaming_count += 1
+
 func _process(delta: float) -> void:
 	_update_camera(delta)
 	_update_phase(delta)
@@ -261,10 +281,11 @@ func _update_phase(delta: float) -> void:
 	phase_time -= delta
 	if phase == "day":
 		canvas_modulate.color = canvas_modulate.color.lerp(Color(1.0, 1.0, 0.93), delta * 1.5)
+		_maintain_day_roamers()
 		if phase_time <= 0.0:
 			_start_night()
 	else:
-		canvas_modulate.color = canvas_modulate.color.lerp(Color(0.38, 0.43, 0.56), delta * 1.6)
+		canvas_modulate.color = canvas_modulate.color.lerp(Color(0.22, 0.26, 0.38), delta * 1.8)
 		_update_wave_spawning(delta)
 		if phase_time <= 0.0 and zombies.is_empty() and wave_spawned >= wave_target:
 			_start_day()
@@ -272,16 +293,20 @@ func _update_phase(delta: float) -> void:
 func _start_night() -> void:
 	phase = "night"
 	phase_time = NIGHT_SECONDS
-	var directions := ["north", "east", "south", "west"]
-	current_spawn_direction = directions[(nights_survived_in_region + region_index + rng.randi_range(0, 2)) % directions.size()]
+	current_spawn_directions = ["north", "east", "south", "west"]
+	current_spawn_direction = "all"
 	wave_spawned = 0
-	wave_target = 8 + REGIONS[region_index]["threat"] * 5 + nights_survived_in_region * 4
-	spawn_timer = 0.4
-	_show_message("夜晚尸潮来袭：%s方向，预计%d只。" % [_direction_text(current_spawn_direction), wave_target], 5.0)
+	wave_target = 28 + REGIONS[region_index]["threat"] * 10 + nights_survived_in_region * 8
+	spawn_timer = 0.15
+	for i in zombies.size():
+		zombies[i]["state"] = "attack"
+	_show_message("夜晚尸潮来袭：四面同时进攻，预计%d只。" % wave_target, 6.0)
 
 func _start_day() -> void:
 	phase = "day"
 	phase_time = DAY_SECONDS
+	current_spawn_directions.clear()
+	current_spawn_direction = "none"
 	day_count += 1
 	nights_survived_in_region += 1
 	for i in buildings.size():
@@ -297,11 +322,14 @@ func _update_wave_spawning(delta: float) -> void:
 		return
 	spawn_timer -= delta
 	if spawn_timer <= 0.0:
-		_spawn_zombie(current_spawn_direction)
-		wave_spawned += 1
-		spawn_timer = max(0.35, 1.35 - region_index * 0.16 - nights_survived_in_region * 0.05)
+		var burst: int = min(4, wave_target - wave_spawned)
+		for i in burst:
+			var direction: String = current_spawn_directions[(wave_spawned + i) % current_spawn_directions.size()]
+			_spawn_zombie(direction, true, false)
+		wave_spawned += burst
+		spawn_timer = max(0.18, 0.82 - region_index * 0.08 - nights_survived_in_region * 0.03)
 
-func _spawn_zombie(direction: String) -> void:
+func _spawn_zombie(direction: String, from_wave := true, roaming := false) -> void:
 	var pos := Vector2.ZERO
 	match direction:
 		"north":
@@ -312,13 +340,21 @@ func _spawn_zombie(direction: String) -> void:
 			pos = Vector2(MAP_HALF_SIZE.x + 80.0, rng.randf_range(-MAP_HALF_SIZE.y, MAP_HALF_SIZE.y))
 		_:
 			pos = Vector2(-MAP_HALF_SIZE.x - 80.0, rng.randf_range(-MAP_HALF_SIZE.y, MAP_HALF_SIZE.y))
+	if roaming:
+		var angle := rng.randf_range(0.0, TAU)
+		var distance := rng.randf_range(DAY_ROAMER_MIN_DISTANCE, min(MAP_HALF_SIZE.x, MAP_HALF_SIZE.y) - 90.0)
+		pos = Vector2(cos(angle), sin(angle)) * distance
 	var threat: int = REGIONS[region_index]["threat"]
+	var hp := 45.0 + threat * 16.0 + nights_survived_in_region * 6.0
 	zombies.append({
 		"pos": pos,
-		"hp": 45.0 + threat * 16.0 + nights_survived_in_region * 6.0,
-		"max_hp": 45.0 + threat * 16.0 + nights_survived_in_region * 6.0,
+		"hp": hp,
+		"max_hp": hp,
 		"damage": 7.0 + threat * 2.0,
 		"attack_timer": 0.0,
+		"state": "roam" if roaming else "attack",
+		"wander_target": _random_wander_target(pos),
+		"from_wave": from_wave,
 	})
 
 func _update_survivors(delta: float) -> void:
@@ -418,6 +454,14 @@ func _update_zombies(delta: float) -> void:
 		if float(z["hp"]) <= 0.0:
 			zombies.remove_at(i)
 			continue
+		if phase == "day" and z.get("state", "attack") == "roam":
+			if _should_day_zombie_attack(z):
+				z["state"] = "attack"
+				_add_float_text("发现营地", z["pos"], Color("#ff8a65"))
+			else:
+				_update_roaming_zombie(z, delta)
+				zombies[i] = z
+				continue
 		var target := _best_zombie_target(z["pos"])
 		if target["type"] == "":
 			continue
@@ -431,6 +475,35 @@ func _update_zombies(delta: float) -> void:
 				_apply_zombie_damage(target, float(z["damage"]))
 				z["attack_timer"] = 0.75
 		zombies[i] = z
+
+func _should_day_zombie_attack(z: Dictionary) -> bool:
+	if z["pos"].length() <= CAMP_RADIUS + DAY_ROAMER_AGGRO_DISTANCE:
+		return true
+	for s in survivors:
+		if z["pos"].distance_to(s["pos"]) <= DAY_SURVIVOR_AGGRO_DISTANCE:
+			return true
+	return false
+
+func _update_roaming_zombie(z: Dictionary, delta: float) -> void:
+	var target: Vector2 = z["wander_target"]
+	if z["pos"].distance_to(target) <= 24.0:
+		z["wander_target"] = _random_wander_target(z["pos"])
+		target = z["wander_target"]
+	var direction: Vector2 = target - z["pos"]
+	if direction.length() > 1.0:
+		z["pos"] += direction.normalized() * (ZOMBIE_SPEED * 0.45) * delta
+
+func _random_wander_target(from_pos: Vector2) -> Vector2:
+	var angle: float = rng.randf_range(0.0, TAU)
+	var distance: float = rng.randf_range(DAY_ROAMER_MIN_DISTANCE, min(MAP_HALF_SIZE.x, MAP_HALF_SIZE.y) - 90.0)
+	var target: Vector2 = Vector2(cos(angle), sin(angle)) * distance
+	if target.distance_to(from_pos) < 180.0:
+		target += Vector2.RIGHT.rotated(angle + PI * 0.5) * 220.0
+	return target
+
+func _random_direction() -> String:
+	var directions: Array[String] = ["north", "east", "south", "west"]
+	return directions[rng.randi_range(0, directions.size() - 1)]
 
 func _best_zombie_target(pos: Vector2) -> Dictionary:
 	var best := {"type": "", "index": -1, "pos": Vector2.ZERO, "distance": INF}
@@ -812,11 +885,14 @@ func _draw_zombies() -> void:
 	for z in zombies:
 		var pos: Vector2 = z["pos"]
 		var rect := Rect2(pos - Vector2(24, 24), Vector2(48, 48))
+		if z.get("state", "attack") == "roam":
+			draw_circle(pos, 34.0, Color(0.45, 0.75, 0.25, 0.12))
 		if zombie_texture:
 			draw_texture_rect(zombie_texture, rect, false)
 		else:
 			draw_circle(pos, 18.0, Color("#7cb342"))
-		draw_circle(pos, 25.0, Color("#263300"), false, 3.0)
+		var ring := Color("#9ccc65") if z.get("state", "attack") == "roam" else Color("#ef5350")
+		draw_circle(pos, 25.0, ring, false, 3.0)
 		var hp_ratio: float = clamp(float(z["hp"]) / float(z["max_hp"]), 0.0, 1.0)
 		draw_line(z["pos"] + Vector2(-14, -24), z["pos"] + Vector2(-14 + 28.0 * hp_ratio, -24), Color("#e53935"), 4.0)
 
@@ -841,15 +917,17 @@ func _draw_floating_texts() -> void:
 func _draw_spawn_direction() -> void:
 	if phase != "night":
 		return
-	var pos := Vector2.ZERO
-	match current_spawn_direction:
-		"north":
-			pos = Vector2(0, -MAP_HALF_SIZE.y + 70)
-		"south":
-			pos = Vector2(0, MAP_HALF_SIZE.y - 70)
-		"east":
-			pos = Vector2(MAP_HALF_SIZE.x - 70, 0)
-		"west":
-			pos = Vector2(-MAP_HALF_SIZE.x + 70, 0)
-	draw_circle(pos, 42.0, Color(0.8, 0.1, 0.1, 0.45))
-	draw_circle(pos, 42.0, Color("#ef5350"), false, 5.0)
+	for direction in current_spawn_directions:
+		var pos := Vector2.ZERO
+		match direction:
+			"north":
+				pos = Vector2(0, -MAP_HALF_SIZE.y + 70)
+			"south":
+				pos = Vector2(0, MAP_HALF_SIZE.y - 70)
+			"east":
+				pos = Vector2(MAP_HALF_SIZE.x - 70, 0)
+			"west":
+				pos = Vector2(-MAP_HALF_SIZE.x + 70, 0)
+		draw_circle(pos, 54.0, Color(0.8, 0.1, 0.1, 0.5))
+		draw_circle(pos, 54.0, Color("#ef5350"), false, 6.0)
+		draw_line(pos, Vector2.ZERO, Color(0.9, 0.1, 0.1, 0.25), 4.0)
