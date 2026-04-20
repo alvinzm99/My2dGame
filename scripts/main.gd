@@ -16,6 +16,8 @@ const SURVIVOR_MELEE_DAMAGE := 16.0
 const SURVIVOR_BOW_COOLDOWN := 0.9
 const SURVIVOR_MELEE_COOLDOWN := 0.55
 const MANUAL_COMMAND_GRACE := 2.5
+const SURVIVOR_REPAIR_RANGE := 52.0
+const SURVIVOR_REPAIR_AMOUNT := 18.0
 const STARTING_WALL_RADIUS := 250.0
 const DAY_ROAMER_MIN_DISTANCE := 920.0
 const DAY_CAMP_AGGRO_DISTANCE := 190.0
@@ -83,6 +85,8 @@ var rng := RandomNumberGenerator.new()
 var camera: Camera2D
 var canvas_modulate: CanvasModulate
 var camp_light: PointLight2D
+var failure_panel: Control
+var failure_label: Label
 var hud_label: Label
 var objective_label: Label
 var selected_label: Label
@@ -104,6 +108,8 @@ var message_time := 5.0
 
 var survivor_texture: Texture2D
 var zombie_texture: Texture2D
+var survivor_textures: Array[Texture2D] = []
+var zombie_textures: Array[Texture2D] = []
 var bow_texture: Texture2D
 var sword_texture: Texture2D
 var stock := {"wood": 80, "scrap": 55, "food": 45}
@@ -116,6 +122,7 @@ var left_mouse_down := false
 var dragging_camera := false
 var left_drag_start_screen := Vector2.ZERO
 var left_drag_total := 0.0
+var game_over := false
 
 var survivors: Array[Dictionary] = []
 var resources: Array[Dictionary] = []
@@ -123,11 +130,23 @@ var buildings: Array[Dictionary] = []
 var zombies: Array[Dictionary] = []
 var floating_texts: Array[Dictionary] = []
 var attack_tracers: Array[Dictionary] = []
+var command_flashes: Array[Dictionary] = []
 
 func _ready() -> void:
 	rng.randomize()
 	survivor_texture = load("res://assets/placeholder/survivor.svg")
 	zombie_texture = load("res://assets/placeholder/zombie.svg")
+	survivor_textures = [
+		survivor_texture,
+		load("res://assets/placeholder/survivor_man.svg"),
+		load("res://assets/placeholder/survivor_woman.svg"),
+		load("res://assets/placeholder/survivor_beard.svg"),
+	]
+	zombie_textures = [
+		zombie_texture,
+		load("res://assets/placeholder/zombie_man.svg"),
+		load("res://assets/placeholder/zombie_woman.svg"),
+	]
 	bow_texture = load("res://assets/placeholder/bow.svg")
 	sword_texture = load("res://assets/placeholder/sword.svg")
 	_setup_camera()
@@ -185,6 +204,37 @@ func _setup_ui() -> void:
 	message_label.add_theme_font_size_override("font_size", 16)
 	root.add_child(message_label)
 
+	failure_panel = ColorRect.new()
+	failure_panel.color = Color(0.02, 0.02, 0.025, 0.82)
+	failure_panel.anchor_right = 1.0
+	failure_panel.anchor_bottom = 1.0
+	failure_panel.visible = false
+	layer.add_child(failure_panel)
+
+	var failure_box := VBoxContainer.new()
+	failure_box.anchor_left = 0.5
+	failure_box.anchor_top = 0.5
+	failure_box.anchor_right = 0.5
+	failure_box.anchor_bottom = 0.5
+	failure_box.offset_left = -360.0
+	failure_box.offset_top = -120.0
+	failure_box.offset_right = 360.0
+	failure_box.offset_bottom = 120.0
+	failure_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	failure_box.add_theme_constant_override("separation", 16)
+	failure_panel.add_child(failure_box)
+
+	failure_label = Label.new()
+	failure_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	failure_label.add_theme_font_size_override("font_size", 32)
+	failure_box.add_child(failure_label)
+
+	var restart_label := Label.new()
+	restart_label.text = "Press R to restart this region"
+	restart_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	restart_label.add_theme_font_size_override("font_size", 18)
+	failure_box.add_child(restart_label)
+
 func _add_build_button(parent: HBoxContainer, text: String, kind: String) -> void:
 	var button := Button.new()
 	button.text = text
@@ -203,6 +253,9 @@ func _start_region(index: int, survivor_count: int) -> void:
 	nights_survived_in_region = 0
 	wave_spawned = 0
 	wave_target = 0
+	game_over = false
+	if failure_panel:
+		failure_panel.visible = false
 	zombies.clear()
 	buildings.clear()
 	resources.clear()
@@ -234,6 +287,8 @@ func _spawn_initial_camp(survivor_count: int) -> void:
 			"work_timer": 0.0,
 			"weapon": "bow",
 			"command_lock": 0.0,
+			"texture": survivor_textures[i % survivor_textures.size()],
+			"repair": -1,
 		})
 
 func _spawn_starting_perimeter() -> void:
@@ -304,6 +359,12 @@ func _maintain_day_roamers() -> void:
 		roaming_count += 1
 
 func _process(delta: float) -> void:
+	if game_over:
+		_update_floating_texts(delta)
+		_update_command_flashes(delta)
+		_update_ui()
+		queue_redraw()
+		return
 	_update_camera(delta)
 	_update_phase(delta)
 	_update_survivors(delta)
@@ -311,7 +372,9 @@ func _process(delta: float) -> void:
 	_update_zombies(delta)
 	_update_floating_texts(delta)
 	_update_attack_tracers(delta)
+	_update_command_flashes(delta)
 	_update_ui()
+	_check_failure()
 	queue_redraw()
 
 func _update_camera(delta: float) -> void:
@@ -403,6 +466,7 @@ func _spawn_zombie(direction: String, from_wave := true, roaming := false) -> vo
 		"state": "roam" if roaming else "attack",
 		"wander_target": _random_wander_target(pos),
 		"from_wave": from_wave,
+		"texture": zombie_textures[rng.randi_range(0, zombie_textures.size() - 1)],
 	})
 
 func _update_survivors(delta: float) -> void:
@@ -421,9 +485,14 @@ func _update_survivors(delta: float) -> void:
 			_process_attack_task(s, delta)
 		elif s["task"] == "attack_move":
 			_process_attack_move_task(s, delta)
+		elif s["task"] == "repair":
+			_process_repair_task(s, delta)
 		else:
 			_move_survivor_toward(s, s["target"], delta)
-			if s["task"] == "idle" or (phase == "night" and float(s["command_lock"]) <= 0.0):
+			if s["task"] == "idle":
+				if not _auto_attack_nearest_zombie(s, delta):
+					_auto_repair_damaged_building(s)
+			elif phase == "night" and float(s["command_lock"]) <= 0.0:
 				_auto_attack_nearest_zombie(s, delta)
 
 		survivors[i] = s
@@ -459,8 +528,13 @@ func _process_attack_task(s: Dictionary, delta: float) -> void:
 		return
 	var z := zombies[enemy_index]
 	var distance: float = s["pos"].distance_to(z["pos"])
+	if distance < SURVIVOR_MELEE_RANGE * 1.35 and zombies.size() > 1:
+		_kite_away_from_zombie(s, z["pos"], delta)
+		_fire_at_zombie_without_chasing(s, enemy_index, delta)
+		return
 	if distance > SURVIVOR_RANGED_RANGE:
 		_move_survivor_toward(s, z["pos"], delta)
+		_fire_at_nearby_zombie(s, delta)
 		s["weapon"] = "bow"
 		return
 	s["work_timer"] = float(s["work_timer"]) + delta
@@ -492,6 +566,37 @@ func _process_attack_move_task(s: Dictionary, delta: float) -> void:
 		s["attack"] = -1
 		s["command_lock"] = 0.0
 
+func _process_repair_task(s: Dictionary, delta: float) -> void:
+	var building_index: int = int(s.get("repair", -1))
+	if building_index < 0 or building_index >= buildings.size() or float(buildings[building_index]["hp"]) >= float(buildings[building_index]["max_hp"]):
+		s["task"] = "idle"
+		s["repair"] = -1
+		return
+	if _auto_attack_nearest_zombie(s, delta):
+		return
+	var b := buildings[building_index]
+	_move_survivor_toward(s, b["pos"], delta)
+	if s["pos"].distance_to(b["pos"]) <= SURVIVOR_REPAIR_RANGE:
+		s["work_timer"] = float(s["work_timer"]) + delta
+		if s["work_timer"] >= 0.55:
+			s["work_timer"] = 0.0
+			b["hp"] = min(float(b["max_hp"]), float(b["hp"]) + SURVIVOR_REPAIR_AMOUNT)
+			buildings[building_index] = b
+			_add_float_text("+repair", b["pos"] + Vector2(0, -42), Color("#81c784"))
+
+func _kite_away_from_zombie(s: Dictionary, threat_pos: Vector2, delta: float) -> void:
+	var away: Vector2 = s["pos"] - threat_pos
+	if away.length() > 1.0:
+		var target: Vector2 = s["pos"] + away.normalized() * 120.0
+		_move_survivor_toward(s, target, delta)
+
+func _fire_at_nearby_zombie(s: Dictionary, delta: float) -> bool:
+	var enemy_index: int = _nearest_zombie(s["pos"], SURVIVOR_RANGED_RANGE)
+	if enemy_index == -1:
+		return false
+	_fire_at_zombie_without_chasing(s, enemy_index, delta)
+	return true
+
 func _fire_at_zombie_without_chasing(s: Dictionary, enemy_index: int, delta: float) -> void:
 	if enemy_index < 0 or enemy_index >= zombies.size():
 		return
@@ -513,13 +618,23 @@ func _fire_at_zombie_without_chasing(s: Dictionary, enemy_index: int, delta: flo
 			zombies[enemy_index] = z
 			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.18, "kind": "arrow"})
 
-func _auto_attack_nearest_zombie(s: Dictionary, delta: float) -> void:
+func _auto_attack_nearest_zombie(s: Dictionary, delta: float) -> bool:
 	var enemy_index := _nearest_zombie(s["pos"], SURVIVOR_RANGED_RANGE)
 	if enemy_index == -1:
-		return
+		return false
 	s["task"] = "attack"
 	s["attack"] = enemy_index
 	_process_attack_task(s, delta)
+	return true
+
+func _auto_repair_damaged_building(s: Dictionary) -> bool:
+	var building_index: int = _nearest_damaged_building(s["pos"], 520.0)
+	if building_index == -1:
+		return false
+	s["task"] = "repair"
+	s["repair"] = building_index
+	s["work_timer"] = 0.0
+	return true
 
 func _move_survivor_toward(s: Dictionary, target: Vector2, delta: float) -> void:
 	var offset: Vector2 = target - s["pos"]
@@ -649,6 +764,18 @@ func _nearest_zombie(pos: Vector2, max_range: float) -> int:
 			best_distance = d
 	return best
 
+func _nearest_damaged_building(pos: Vector2, max_range: float) -> int:
+	var best := -1
+	var best_distance := max_range
+	for i in buildings.size():
+		if float(buildings[i]["hp"]) >= float(buildings[i]["max_hp"]):
+			continue
+		var d := pos.distance_to(buildings[i]["pos"])
+		if d < best_distance:
+			best = i
+			best_distance = d
+	return best
+
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
@@ -709,13 +836,24 @@ func _handle_left_click(world_pos: Vector2) -> void:
 		_show_message("已选择建筑。墙和塔会自动防守，继续建造可以扩展营地。", 2.5)
 
 func _handle_right_click(world_pos: Vector2) -> void:
-	if selected_survivor == -1 or selected_survivor >= survivors.size():
-		return
 	var resource_index := _resource_at(world_pos)
 	var enemy_index := _zombie_at(world_pos)
+	var building_index := _building_at(world_pos)
+	if resource_index != -1:
+		_add_command_flash(resources[resource_index]["pos"], Color("#66bb6a"), 46.0, "gather")
+	elif enemy_index != -1:
+		_add_command_flash(zombies[enemy_index]["pos"], Color("#ef5350"), 52.0, "attack")
+	elif building_index != -1:
+		_add_command_flash(buildings[building_index]["pos"], Color("#ffd54f"), 54.0, "building")
+	else:
+		_add_command_flash(world_pos, Color("#64b5f6"), 34.0, "move")
+	if selected_survivor == -1 or selected_survivor >= survivors.size():
+		_show_message("先左键选择幸存者，再右键下命令。", 2.0)
+		return
 	if resource_index != -1 and phase == "day":
 		survivors[selected_survivor]["task"] = "gather"
 		survivors[selected_survivor]["resource"] = resource_index
+		survivors[selected_survivor]["attack"] = -1
 		survivors[selected_survivor]["work_timer"] = 0.0
 		survivors[selected_survivor]["command_lock"] = MANUAL_COMMAND_GRACE
 		_show_message("幸存者开始采集资源。", 2.0)
@@ -725,6 +863,12 @@ func _handle_right_click(world_pos: Vector2) -> void:
 		survivors[selected_survivor]["work_timer"] = 0.0
 		survivors[selected_survivor]["command_lock"] = 0.0
 		_show_message("幸存者攻击目标。", 2.0)
+	elif building_index != -1:
+		if float(buildings[building_index]["hp"]) < float(buildings[building_index]["max_hp"]):
+			survivors[selected_survivor]["task"] = "repair"
+			survivors[selected_survivor]["repair"] = building_index
+			survivors[selected_survivor]["work_timer"] = 0.0
+			_show_message("幸存者前往维修建筑。", 2.0)
 	else:
 		survivors[selected_survivor]["task"] = "attack_move"
 		survivors[selected_survivor]["target"] = world_pos
@@ -769,6 +913,8 @@ func _place_building(world_pos: Vector2) -> void:
 			"work_timer": 0.0,
 			"weapon": "bow",
 			"command_lock": 0.0,
+			"texture": survivor_textures[survivors.size() % survivor_textures.size()],
+			"repair": -1,
 		})
 		_show_message("避难所接纳了一名新幸存者。", 4.0)
 
@@ -835,6 +981,25 @@ func _core_destroyed() -> bool:
 			return float(b["hp"]) <= 0.0
 	return true
 
+func _check_failure() -> void:
+	if game_over:
+		return
+	if _core_destroyed():
+		_trigger_failure("Camp core destroyed")
+	elif survivors.is_empty():
+		_trigger_failure("All survivors are dead")
+
+func _trigger_failure(reason: String) -> void:
+	game_over = true
+	build_mode = ""
+	selected_survivor = -1
+	selected_building = -1
+	if failure_panel:
+		failure_panel.visible = true
+	if failure_label:
+		failure_label.text = "FAILED\n%s" % reason
+	_show_message("任务失败。按 R 重开当前地区。", 999.0)
+
 func _survivor_at(pos: Vector2) -> int:
 	for i in survivors.size():
 		if survivors[i]["pos"].distance_to(pos) <= 28.0:
@@ -874,8 +1039,18 @@ func _update_attack_tracers(delta: float) -> void:
 		if float(attack_tracers[i]["life"]) <= 0.0:
 			attack_tracers.remove_at(i)
 
+func _update_command_flashes(delta: float) -> void:
+	for i in range(command_flashes.size() - 1, -1, -1):
+		command_flashes[i]["life"] = float(command_flashes[i]["life"]) - delta
+		command_flashes[i]["radius"] = float(command_flashes[i]["radius"]) + 34.0 * delta
+		if float(command_flashes[i]["life"]) <= 0.0:
+			command_flashes.remove_at(i)
+
 func _add_float_text(text: String, pos: Vector2, color: Color) -> void:
 	floating_texts.append({"text": text, "pos": pos, "color": color, "life": 1.1})
+
+func _add_command_flash(pos: Vector2, color: Color, radius: float, text: String) -> void:
+	command_flashes.append({"pos": pos, "color": color, "radius": radius, "text": text, "life": 0.55})
 
 func _show_message(text: String, duration: float) -> void:
 	message = text
@@ -954,6 +1129,7 @@ func _draw() -> void:
 	_draw_ground()
 	_draw_resources()
 	_draw_buildings()
+	_draw_command_flashes()
 	_draw_attack_tracers()
 	_draw_survivors()
 	_draw_zombies()
@@ -1029,13 +1205,24 @@ func _draw_attack_tracers() -> void:
 		else:
 			draw_line(tracer["from"], tracer["to"], Color(1.0, 0.9, 0.25, alpha), 5.0)
 
+func _draw_command_flashes() -> void:
+	var font := ThemeDB.fallback_font
+	for flash in command_flashes:
+		var alpha: float = clamp(float(flash["life"]) / 0.55, 0.0, 1.0)
+		var color: Color = flash["color"]
+		color.a = alpha
+		draw_circle(flash["pos"], float(flash["radius"]), Color(color.r, color.g, color.b, 0.18 * alpha))
+		draw_circle(flash["pos"], float(flash["radius"]), color, false, 5.0)
+		draw_string(font, flash["pos"] + Vector2(-24, -float(flash["radius"]) - 8), flash["text"], HORIZONTAL_ALIGNMENT_LEFT, -1.0, 14, color)
+
 func _draw_survivors() -> void:
 	for i in survivors.size():
 		var s := survivors[i]
 		var pos: Vector2 = s["pos"]
 		var rect := Rect2(pos - Vector2(24, 24), Vector2(48, 48))
-		if survivor_texture:
-			draw_texture_rect(survivor_texture, rect, false)
+		var texture: Texture2D = s.get("texture", survivor_texture)
+		if texture:
+			draw_texture_rect(texture, rect, false)
 		else:
 			draw_circle(pos, 17.0, Color("#42a5f5"))
 		var outline := Color("#fff176") if i == selected_survivor else Color("#0d1b2a")
@@ -1059,8 +1246,9 @@ func _draw_zombies() -> void:
 		var rect := Rect2(pos - Vector2(24, 24), Vector2(48, 48))
 		if z.get("state", "attack") == "roam":
 			draw_circle(pos, 34.0, Color(0.45, 0.75, 0.25, 0.12))
-		if zombie_texture:
-			draw_texture_rect(zombie_texture, rect, false)
+		var texture: Texture2D = z.get("texture", zombie_texture)
+		if texture:
+			draw_texture_rect(texture, rect, false)
 		else:
 			draw_circle(pos, 18.0, Color("#7cb342"))
 		var ring := Color("#9ccc65") if z.get("state", "attack") == "roam" else Color("#ef5350")
