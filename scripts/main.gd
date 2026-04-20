@@ -100,7 +100,7 @@ func _setup_camera() -> void:
 	add_child(camp_light)
 
 func _setup_ui() -> void:
-	hud.setup(self, Callable(self, "_set_build_mode"))
+	hud.setup(self, Callable(self, "_set_build_mode"), Callable(self, "_assign_survivor_to_selected_building"))
 
 func _start_region(index: int, survivor_count: int) -> void:
 	region_index = clamp(index, 0, REGIONS.size() - 1)
@@ -296,9 +296,43 @@ func _update_buildings(delta: float) -> void:
 					b["cooldown"] = float(BUILDINGS["tower"]["cooldown"])
 					effects.add_attack_tracer(b["pos"], zombies[enemy_index]["pos"], 0.16)
 					_add_float_text("塔射击", b["pos"] + Vector2(0, -36), Color("#ffd54f"))
+		elif b["kind"] == "lookout":
+			_update_staffed_lookout(b, delta)
+		_update_staffed_production(b, delta)
 		if b["kind"] == "core":
 			base_hp = float(b["hp"])
 		buildings[i] = b
+
+func _update_staffed_production(b: Dictionary, delta: float) -> void:
+	if not BUILDINGS.has(b["kind"]):
+		return
+	var def: Dictionary = BUILDINGS[b["kind"]]
+	if not def.has("production") or int(b.get("staff", -1)) == -1:
+		return
+	b["production_timer"] = float(b.get("production_timer", 0.0)) + delta
+	if float(b["production_timer"]) < GameConfig.STAFF_PRODUCTION_INTERVAL:
+		return
+	b["production_timer"] = 0.0
+	var production: Dictionary = def["production"]
+	for key in production.keys():
+		stock[key] = int(stock.get(key, 0)) + int(production[key])
+		_add_float_text("+%d %s" % [production[key], key], b["pos"] + Vector2(0, -44), RESOURCE_COLORS[key])
+
+func _update_staffed_lookout(b: Dictionary, delta: float) -> void:
+	if int(b.get("staff", -1)) == -1:
+		return
+	b["cooldown"] = max(0.0, float(b["cooldown"]) - delta)
+	if float(b["cooldown"]) > 0.0:
+		return
+	var enemy_index := _nearest_zombie(b["pos"], 360.0)
+	if enemy_index == -1:
+		return
+	var aim: Vector2 = zombies[enemy_index]["pos"] - b["pos"]
+	b["angle"] = aim.angle()
+	zombies[enemy_index]["hp"] = float(zombies[enemy_index]["hp"]) - 14.0
+	b["cooldown"] = 0.55
+	effects.add_attack_tracer(b["pos"], zombies[enemy_index]["pos"], 0.16)
+	_add_float_text("瞭望射击", b["pos"] + Vector2(0, -38), Color("#ffecb3"))
 
 func _update_zombies(delta: float) -> void:
 	for i in range(zombies.size() - 1, -1, -1):
@@ -426,6 +460,12 @@ func _input(event: InputEvent) -> void:
 				_set_build_mode("tower")
 			KEY_3:
 				_set_build_mode("shelter")
+			KEY_4:
+				_set_build_mode("lumberyard")
+			KEY_5:
+				_set_build_mode("workshop")
+			KEY_6:
+				_set_build_mode("lookout")
 			KEY_ESCAPE:
 				build_mode = ""
 			KEY_N:
@@ -449,6 +489,43 @@ func _handle_left_click(world_pos: Vector2) -> void:
 	selected_building = _building_at(world_pos)
 	if selected_building != -1:
 		_show_message("已选择建筑。墙和塔会自动防守，继续建造可以扩展营地。", 2.5)
+
+func _assign_survivor_to_selected_building(survivor_index: int) -> void:
+	if selected_building < 0 or selected_building >= buildings.size():
+		return
+	_assign_survivor_to_building(survivor_index, selected_building)
+
+func _assign_survivor_to_building(survivor_index: int, building_index: int) -> void:
+	if survivor_index < 0 or survivor_index >= survivors.size() or building_index < 0 or building_index >= buildings.size():
+		return
+	var building: Dictionary = buildings[building_index]
+	if not BUILDINGS.has(building["kind"]):
+		_show_message("这个建筑不能派驻。", 2.0)
+		return
+	var def: Dictionary = BUILDINGS[building["kind"]]
+	if not def.has("staff_mode"):
+		_show_message("这个建筑没有派驻槽位。", 2.0)
+		return
+	var old_staff: int = int(building.get("staff", -1))
+	if old_staff >= 0 and old_staff < survivors.size():
+		survivors[old_staff]["assigned_building"] = -1
+		survivors[old_staff]["behavior"] = "idle"
+		survivors[old_staff]["task"] = "idle"
+	var old_building: int = int(survivors[survivor_index].get("assigned_building", -1))
+	if old_building >= 0 and old_building < buildings.size():
+		buildings[old_building]["staff"] = -1
+	building["staff"] = survivor_index
+	building["production_timer"] = 0.0
+	buildings[building_index] = building
+	survivors[survivor_index]["assigned_building"] = building_index
+	survivors[survivor_index]["behavior"] = def["staff_mode"]
+	survivors[survivor_index]["task"] = "assigned"
+	survivors[survivor_index]["target"] = building["pos"] + Vector2(0, 36)
+	survivors[survivor_index]["resource"] = -1
+	survivors[survivor_index]["repair"] = -1
+	survivors[survivor_index]["attack"] = -1
+	survivors[survivor_index]["work_timer"] = 0.0
+	_show_message("幸存者已派驻到 %s，模式：%s。" % [def["name"], def["staff_mode"]], 3.0)
 
 func _handle_right_click(world_pos: Vector2) -> void:
 	var resource_index := _resource_at(world_pos)
@@ -641,6 +718,7 @@ func _update_ui() -> void:
 	]
 	hud.set_texts(hud_text, _objective_text(region), _selected_text(), message if message_time > 0.0 else "")
 	hud.set_build_disabled(phase == "night")
+	hud.update_building_panel(selected_building, buildings, survivors)
 
 func _objective_text(region: Dictionary) -> String:
 	var counts := _building_counts()

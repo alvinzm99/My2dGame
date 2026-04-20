@@ -29,6 +29,8 @@ func update(
 			_process_attack_move_task(s, zombies, effects, delta)
 		elif s["task"] == "repair":
 			_process_repair_task(s, zombies, buildings, effects, delta)
+		elif s["task"] == "assigned":
+			_process_assigned_task(s, buildings, zombies, effects, delta)
 		else:
 			_move_survivor_toward(s, s["target"], delta)
 			if s["task"] == "idle":
@@ -39,6 +41,19 @@ func update(
 
 		survivors[i] = s
 	return selected_survivor
+
+func _process_assigned_task(s: Dictionary, buildings: Array[Dictionary], zombies: Array[Dictionary], effects: EffectsSystem, delta: float) -> void:
+	var building_index: int = int(s.get("assigned_building", -1))
+	if building_index < 0 or building_index >= buildings.size():
+		s["assigned_building"] = -1
+		s["behavior"] = "idle"
+		s["task"] = "idle"
+		return
+	var b: Dictionary = buildings[building_index]
+	s["target"] = b["pos"] + Vector2(0, 36)
+	_move_survivor_toward(s, s["target"], delta)
+	if s.get("behavior", "idle") == "defense":
+		_fire_at_nearby_zombie(s, zombies, effects, delta)
 
 func _process_gather_task(s: Dictionary, resources: Array[Dictionary], stock: Dictionary, effects: EffectsSystem, delta: float) -> void:
 	var resource_index: int = int(s["resource"])

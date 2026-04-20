@@ -16,6 +16,8 @@ static func make_survivor(pos: Vector2, texture: Texture2D) -> Dictionary:
 		"command_lock": 0.0,
 		"texture": texture,
 		"repair": -1,
+		"assigned_building": -1,
+		"behavior": "idle",
 	}
 
 static func make_building(kind: String, pos: Vector2, base_max_hp: float) -> Dictionary:
@@ -39,6 +41,8 @@ static func make_building(kind: String, pos: Vector2, base_max_hp: float) -> Dic
 		"size": def["size"],
 		"cooldown": 0.0,
 		"angle": 0.0,
+		"staff": -1,
+		"production_timer": 0.0,
 	}
 
 static func make_zombie(pos: Vector2, hp: float, damage: float, roaming: bool, from_wave: bool, texture: Texture2D, wander_target: Vector2) -> Dictionary:

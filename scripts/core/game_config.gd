@@ -24,6 +24,7 @@ const DAY_ROAMER_MIN_DISTANCE := 920.0
 const DAY_CAMP_AGGRO_DISTANCE := 190.0
 const DAY_BUILDING_AGGRO_DISTANCE := 120.0
 const DAY_SURVIVOR_AGGRO_DISTANCE := 170.0
+const STAFF_PRODUCTION_INTERVAL := 3.0
 
 const RESOURCE_COLORS := {
 	"wood": Color("#5d8a45"),
@@ -55,6 +56,32 @@ const BUILDINGS := {
 		"hp": 220,
 		"size": Vector2(66, 48),
 		"color": Color("#546e7a"),
+	},
+	"lumberyard": {
+		"name": "Lumberyard",
+		"cost": {"wood": 36, "scrap": 14},
+		"hp": 180,
+		"size": Vector2(72, 52),
+		"color": Color("#4e7d45"),
+		"staff_mode": "wood",
+		"production": {"wood": 7},
+	},
+	"workshop": {
+		"name": "Workshop",
+		"cost": {"wood": 42, "scrap": 28},
+		"hp": 190,
+		"size": Vector2(72, 52),
+		"color": Color("#78909c"),
+		"staff_mode": "scrap",
+		"production": {"scrap": 6},
+	},
+	"lookout": {
+		"name": "Lookout",
+		"cost": {"wood": 46, "scrap": 22},
+		"hp": 160,
+		"size": Vector2(58, 58),
+		"color": Color("#8d6e63"),
+		"staff_mode": "defense",
 	},
 }
 
