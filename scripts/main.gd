@@ -1,85 +1,31 @@
 extends Node2D
 
-const MAP_HALF_SIZE := Vector2(1800.0, 1200.0)
-const CAMP_RADIUS := 560.0
-const DAY_SECONDS := 38.0
-const NIGHT_SECONDS := 45.0
-const SURVIVOR_SPEED := 135.0
-const ZOMBIE_SPEED := 72.0
-const INTERACT_RANGE := 36.0
-const BUILD_GRID := 48.0
-const CLICK_DRAG_THRESHOLD := 8.0
-const SURVIVOR_RANGED_RANGE := 245.0
-const SURVIVOR_MELEE_RANGE := 58.0
-const SURVIVOR_BOW_DAMAGE := 10.0
-const SURVIVOR_MELEE_DAMAGE := 16.0
-const SURVIVOR_BOW_COOLDOWN := 0.9
-const SURVIVOR_MELEE_COOLDOWN := 0.55
-const MANUAL_COMMAND_GRACE := 2.5
-const SURVIVOR_REPAIR_RANGE := 52.0
-const SURVIVOR_REPAIR_AMOUNT := 18.0
-const STARTING_WALL_RADIUS := 250.0
-const DAY_ROAMER_MIN_DISTANCE := 920.0
-const DAY_CAMP_AGGRO_DISTANCE := 190.0
-const DAY_BUILDING_AGGRO_DISTANCE := 120.0
-const DAY_SURVIVOR_AGGRO_DISTANCE := 170.0
-
-const RESOURCE_COLORS := {
-	"wood": Color("#5d8a45"),
-	"scrap": Color("#8a9299"),
-	"food": Color("#d6a03f"),
-}
-
-const BUILDINGS := {
-	"wall": {
-		"name": "Wall",
-		"cost": {"wood": 12, "scrap": 4},
-		"hp": 180,
-		"size": Vector2(42, 42),
-		"color": Color("#6b7075"),
-	},
-	"tower": {
-		"name": "Watchtower",
-		"cost": {"wood": 24, "scrap": 18},
-		"hp": 140,
-		"size": Vector2(46, 46),
-		"color": Color("#a26d3d"),
-		"range": 280.0,
-		"damage": 18.0,
-		"cooldown": 0.7,
-	},
-	"shelter": {
-		"name": "Shelter",
-		"cost": {"wood": 32, "food": 18},
-		"hp": 220,
-		"size": Vector2(66, 48),
-		"color": Color("#546e7a"),
-	},
-}
-
-const REGIONS := [
-	{
-		"name": "旧高速服务区",
-		"resource_goal": {"wood": 120, "scrap": 70, "food": 55},
-		"required_nights": 2,
-		"required_buildings": {"wall": 4, "tower": 1, "shelter": 1},
-		"threat": 1,
-	},
-	{
-		"name": "废弃工业镇",
-		"resource_goal": {"wood": 180, "scrap": 135, "food": 90},
-		"required_nights": 3,
-		"required_buildings": {"wall": 7, "tower": 2, "shelter": 2},
-		"threat": 2,
-	},
-	{
-		"name": "河岸隔离带",
-		"resource_goal": {"wood": 260, "scrap": 210, "food": 135},
-		"required_nights": 4,
-		"required_buildings": {"wall": 10, "tower": 3, "shelter": 3},
-		"threat": 3,
-	},
-]
+const MAP_HALF_SIZE := GameConfig.MAP_HALF_SIZE
+const CAMP_RADIUS := GameConfig.CAMP_RADIUS
+const DAY_SECONDS := GameConfig.DAY_SECONDS
+const NIGHT_SECONDS := GameConfig.NIGHT_SECONDS
+const SURVIVOR_SPEED := GameConfig.SURVIVOR_SPEED
+const ZOMBIE_SPEED := GameConfig.ZOMBIE_SPEED
+const INTERACT_RANGE := GameConfig.INTERACT_RANGE
+const BUILD_GRID := GameConfig.BUILD_GRID
+const CLICK_DRAG_THRESHOLD := GameConfig.CLICK_DRAG_THRESHOLD
+const SURVIVOR_RANGED_RANGE := GameConfig.SURVIVOR_RANGED_RANGE
+const SURVIVOR_MELEE_RANGE := GameConfig.SURVIVOR_MELEE_RANGE
+const SURVIVOR_BOW_DAMAGE := GameConfig.SURVIVOR_BOW_DAMAGE
+const SURVIVOR_MELEE_DAMAGE := GameConfig.SURVIVOR_MELEE_DAMAGE
+const SURVIVOR_BOW_COOLDOWN := GameConfig.SURVIVOR_BOW_COOLDOWN
+const SURVIVOR_MELEE_COOLDOWN := GameConfig.SURVIVOR_MELEE_COOLDOWN
+const MANUAL_COMMAND_GRACE := GameConfig.MANUAL_COMMAND_GRACE
+const SURVIVOR_REPAIR_RANGE := GameConfig.SURVIVOR_REPAIR_RANGE
+const SURVIVOR_REPAIR_AMOUNT := GameConfig.SURVIVOR_REPAIR_AMOUNT
+const STARTING_WALL_RADIUS := GameConfig.STARTING_WALL_RADIUS
+const DAY_ROAMER_MIN_DISTANCE := GameConfig.DAY_ROAMER_MIN_DISTANCE
+const DAY_CAMP_AGGRO_DISTANCE := GameConfig.DAY_CAMP_AGGRO_DISTANCE
+const DAY_BUILDING_AGGRO_DISTANCE := GameConfig.DAY_BUILDING_AGGRO_DISTANCE
+const DAY_SURVIVOR_AGGRO_DISTANCE := GameConfig.DAY_SURVIVOR_AGGRO_DISTANCE
+const RESOURCE_COLORS := GameConfig.RESOURCE_COLORS
+const BUILDINGS := GameConfig.BUILDINGS
+const REGIONS := GameConfig.REGIONS
 
 var rng := RandomNumberGenerator.new()
 var camera: Camera2D
@@ -275,57 +221,15 @@ func _spawn_initial_camp(survivor_count: int) -> void:
 	buildings.append(_make_building("tower", Vector2(0, -168)))
 	for i in survivor_count:
 		var angle: float = TAU * float(i) / max(1.0, float(survivor_count))
-		survivors.append({
-			"pos": Vector2(cos(angle), sin(angle)) * 80.0,
-			"target": Vector2(cos(angle), sin(angle)) * 80.0,
-			"hp": 100.0,
-			"task": "idle",
-			"resource": -1,
-			"attack": -1,
-			"carry_type": "",
-			"carry": 0,
-			"work_timer": 0.0,
-			"weapon": "bow",
-			"command_lock": 0.0,
-			"texture": survivor_textures[i % survivor_textures.size()],
-			"repair": -1,
-		})
+		var pos := Vector2(cos(angle), sin(angle)) * 80.0
+		survivors.append(EntityFactory.make_survivor(pos, survivor_textures[i % survivor_textures.size()]))
 
 func _spawn_starting_perimeter() -> void:
-	var wall_positions: Array[Vector2] = [
-		Vector2(-240, -240), Vector2(-192, -240), Vector2(-144, -240), Vector2(-96, -240), Vector2(-48, -240),
-		Vector2(48, -240), Vector2(96, -240), Vector2(144, -240), Vector2(192, -240), Vector2(240, -240),
-		Vector2(-240, 240), Vector2(-192, 240), Vector2(-144, 240), Vector2(-96, 240), Vector2(-48, 240),
-		Vector2(48, 240), Vector2(96, 240), Vector2(144, 240), Vector2(192, 240), Vector2(240, 240),
-		Vector2(-240, -192), Vector2(-240, -144), Vector2(-240, -96), Vector2(-240, -48), Vector2(-240, 0),
-		Vector2(-240, 48), Vector2(-240, 96), Vector2(-240, 144), Vector2(-240, 192),
-		Vector2(240, -192), Vector2(240, -144), Vector2(240, -96), Vector2(240, -48), Vector2(240, 0),
-		Vector2(240, 48), Vector2(240, 96), Vector2(240, 144), Vector2(240, 192),
-	]
-	for pos in wall_positions:
+	for pos in EntityFactory.starting_wall_positions():
 		buildings.append(_make_building("wall", pos))
 
 func _make_building(kind: String, pos: Vector2) -> Dictionary:
-	if kind == "core":
-		return {
-			"kind": "core",
-			"pos": pos,
-			"hp": base_max_hp,
-			"max_hp": base_max_hp,
-			"size": Vector2(86, 86),
-			"cooldown": 0.0,
-			"angle": 0.0,
-		}
-	var def: Dictionary = BUILDINGS[kind]
-	return {
-		"kind": kind,
-		"pos": pos,
-		"hp": float(def["hp"]),
-		"max_hp": float(def["hp"]),
-		"size": def["size"],
-		"cooldown": 0.0,
-		"angle": 0.0,
-	}
+	return EntityFactory.make_building(kind, pos, base_max_hp)
 
 func _spawn_resources() -> void:
 	var types := ["wood", "scrap", "food"]
@@ -456,18 +360,10 @@ func _spawn_zombie(direction: String, from_wave := true, roaming := false) -> vo
 		var distance: float = rng.randf_range(DAY_ROAMER_MIN_DISTANCE, min(MAP_HALF_SIZE.x, MAP_HALF_SIZE.y) - 80.0)
 		pos = Vector2(cos(angle), sin(angle)) * distance
 	var threat: int = REGIONS[region_index]["threat"]
-	var hp := 45.0 + threat * 16.0 + nights_survived_in_region * 6.0
-	zombies.append({
-		"pos": pos,
-		"hp": hp,
-		"max_hp": hp,
-		"damage": 7.0 + threat * 2.0,
-		"attack_timer": 0.0,
-		"state": "roam" if roaming else "attack",
-		"wander_target": _random_wander_target(pos),
-		"from_wave": from_wave,
-		"texture": zombie_textures[rng.randi_range(0, zombie_textures.size() - 1)],
-	})
+	var hp: float = 45.0 + threat * 16.0 + nights_survived_in_region * 6.0
+	var damage: float = 7.0 + threat * 2.0
+	var texture: Texture2D = zombie_textures[rng.randi_range(0, zombie_textures.size() - 1)]
+	zombies.append(EntityFactory.make_zombie(pos, hp, damage, roaming, from_wave, texture, _random_wander_target(pos)))
 
 func _update_survivors(delta: float) -> void:
 	for i in range(survivors.size() - 1, -1, -1):
@@ -755,26 +651,10 @@ func _apply_zombie_damage(target: Dictionary, damage: float) -> void:
 			survivors[i]["hp"] = float(survivors[i]["hp"]) - damage
 
 func _nearest_zombie(pos: Vector2, max_range: float) -> int:
-	var best := -1
-	var best_distance := max_range
-	for i in zombies.size():
-		var d := pos.distance_to(zombies[i]["pos"])
-		if d < best_distance:
-			best = i
-			best_distance = d
-	return best
+	return SpatialQueries.nearest_zombie(zombies, pos, max_range)
 
 func _nearest_damaged_building(pos: Vector2, max_range: float) -> int:
-	var best := -1
-	var best_distance := max_range
-	for i in buildings.size():
-		if float(buildings[i]["hp"]) >= float(buildings[i]["max_hp"]):
-			continue
-		var d := pos.distance_to(buildings[i]["pos"])
-		if d < best_distance:
-			best = i
-			best_distance = d
-	return best
+	return SpatialQueries.nearest_damaged_building(buildings, pos, max_range)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -901,21 +781,8 @@ func _place_building(world_pos: Vector2) -> void:
 	buildings.append(_make_building(build_mode, pos))
 	_add_float_text("建造完成", pos, Color("#90caf9"))
 	if build_mode == "shelter" and survivors.size() < 6:
-		survivors.append({
-			"pos": pos + Vector2(0, 48),
-			"target": pos + Vector2(0, 48),
-			"hp": 100.0,
-			"task": "idle",
-			"resource": -1,
-			"attack": -1,
-			"carry_type": "",
-			"carry": 0,
-			"work_timer": 0.0,
-			"weapon": "bow",
-			"command_lock": 0.0,
-			"texture": survivor_textures[survivors.size() % survivor_textures.size()],
-			"repair": -1,
-		})
+		var survivor_pos := pos + Vector2(0, 48)
+		survivors.append(EntityFactory.make_survivor(survivor_pos, survivor_textures[survivors.size() % survivor_textures.size()]))
 		_show_message("避难所接纳了一名新幸存者。", 4.0)
 
 func _heal_selected_survivor() -> void:
@@ -1001,30 +868,16 @@ func _trigger_failure(reason: String) -> void:
 	_show_message("任务失败。按 R 重开当前地区。", 999.0)
 
 func _survivor_at(pos: Vector2) -> int:
-	for i in survivors.size():
-		if survivors[i]["pos"].distance_to(pos) <= 28.0:
-			return i
-	return -1
+	return SpatialQueries.survivor_at(survivors, pos)
 
 func _resource_at(pos: Vector2) -> int:
-	for i in resources.size():
-		if resources[i]["pos"].distance_to(pos) <= 34.0:
-			return i
-	return -1
+	return SpatialQueries.resource_at(resources, pos)
 
 func _zombie_at(pos: Vector2) -> int:
-	for i in zombies.size():
-		if zombies[i]["pos"].distance_to(pos) <= 30.0:
-			return i
-	return -1
+	return SpatialQueries.zombie_at(zombies, pos)
 
 func _building_at(pos: Vector2) -> int:
-	for i in buildings.size():
-		var b := buildings[i]
-		var half: Vector2 = b["size"] * 0.55
-		if Rect2(b["pos"] - half, half * 2.0).has_point(pos):
-			return i
-	return -1
+	return SpatialQueries.building_at(buildings, pos)
 
 func _update_floating_texts(delta: float) -> void:
 	for i in range(floating_texts.size() - 1, -1, -1):
