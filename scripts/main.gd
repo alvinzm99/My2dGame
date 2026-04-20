@@ -490,6 +490,7 @@ func _handle_right_click(world_pos: Vector2) -> void:
 		survivors[selected_survivor]["resource"] = -1
 		survivors[selected_survivor]["attack"] = _nearest_zombie(survivors[selected_survivor]["pos"], SURVIVOR_RANGED_RANGE)
 		survivors[selected_survivor]["work_timer"] = 0.0
+		survivors[selected_survivor]["move_fire_timer"] = GameConfig.SURVIVOR_BOW_COOLDOWN
 		survivors[selected_survivor]["command_lock"] = MANUAL_COMMAND_GRACE
 		_show_message("幸存者移动到指定位置，并边走边射击。", 2.0)
 

@@ -103,11 +103,34 @@ func _process_attack_move_task(s: Dictionary, zombies: Array[Dictionary], effect
 		enemy_index = SpatialQueries.nearest_zombie(zombies, s["pos"], GameConfig.SURVIVOR_RANGED_RANGE)
 		s["attack"] = enemy_index
 	if enemy_index != -1:
-		_fire_at_zombie_without_chasing(s, zombies, enemy_index, effects, delta)
+		_fire_while_moving(s, zombies, enemy_index, effects, delta)
 	if s["pos"].distance_to(s["target"]) <= 7.0:
 		s["task"] = "idle"
-		s["attack"] = -1
 		s["command_lock"] = 0.0
+
+func _fire_while_moving(s: Dictionary, zombies: Array[Dictionary], enemy_index: int, effects: EffectsSystem, delta: float) -> void:
+	if enemy_index < 0 or enemy_index >= zombies.size():
+		return
+	var z: Dictionary = zombies[enemy_index]
+	var distance: float = s["pos"].distance_to(z["pos"])
+	if distance > GameConfig.SURVIVOR_RANGED_RANGE:
+		return
+	s["move_fire_timer"] = float(s.get("move_fire_timer", GameConfig.SURVIVOR_BOW_COOLDOWN))
+	s["move_fire_timer"] += delta
+	if distance <= GameConfig.SURVIVOR_MELEE_RANGE:
+		s["weapon"] = "sword"
+		if float(s["move_fire_timer"]) >= GameConfig.SURVIVOR_MELEE_COOLDOWN:
+			s["move_fire_timer"] = 0.0
+			z["hp"] = float(z["hp"]) - GameConfig.SURVIVOR_MELEE_DAMAGE
+			zombies[enemy_index] = z
+			effects.add_attack_tracer(s["pos"], z["pos"], 0.12, "melee")
+	else:
+		s["weapon"] = "bow"
+		if float(s["move_fire_timer"]) >= GameConfig.SURVIVOR_BOW_COOLDOWN:
+			s["move_fire_timer"] = 0.0
+			z["hp"] = float(z["hp"]) - GameConfig.SURVIVOR_BOW_DAMAGE
+			zombies[enemy_index] = z
+			effects.add_attack_tracer(s["pos"], z["pos"], 0.18, "arrow")
 
 func _process_repair_task(s: Dictionary, zombies: Array[Dictionary], buildings: Array[Dictionary], effects: EffectsSystem, delta: float) -> void:
 	var building_index: int = int(s.get("repair", -1))
