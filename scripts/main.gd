@@ -4,20 +4,11 @@ const MAP_HALF_SIZE := GameConfig.MAP_HALF_SIZE
 const CAMP_RADIUS := GameConfig.CAMP_RADIUS
 const DAY_SECONDS := GameConfig.DAY_SECONDS
 const NIGHT_SECONDS := GameConfig.NIGHT_SECONDS
-const SURVIVOR_SPEED := GameConfig.SURVIVOR_SPEED
 const ZOMBIE_SPEED := GameConfig.ZOMBIE_SPEED
-const INTERACT_RANGE := GameConfig.INTERACT_RANGE
 const BUILD_GRID := GameConfig.BUILD_GRID
 const CLICK_DRAG_THRESHOLD := GameConfig.CLICK_DRAG_THRESHOLD
 const SURVIVOR_RANGED_RANGE := GameConfig.SURVIVOR_RANGED_RANGE
-const SURVIVOR_MELEE_RANGE := GameConfig.SURVIVOR_MELEE_RANGE
-const SURVIVOR_BOW_DAMAGE := GameConfig.SURVIVOR_BOW_DAMAGE
-const SURVIVOR_MELEE_DAMAGE := GameConfig.SURVIVOR_MELEE_DAMAGE
-const SURVIVOR_BOW_COOLDOWN := GameConfig.SURVIVOR_BOW_COOLDOWN
-const SURVIVOR_MELEE_COOLDOWN := GameConfig.SURVIVOR_MELEE_COOLDOWN
 const MANUAL_COMMAND_GRACE := GameConfig.MANUAL_COMMAND_GRACE
-const SURVIVOR_REPAIR_RANGE := GameConfig.SURVIVOR_REPAIR_RANGE
-const SURVIVOR_REPAIR_AMOUNT := GameConfig.SURVIVOR_REPAIR_AMOUNT
 const STARTING_WALL_RADIUS := GameConfig.STARTING_WALL_RADIUS
 const DAY_ROAMER_MIN_DISTANCE := GameConfig.DAY_ROAMER_MIN_DISTANCE
 const DAY_CAMP_AGGRO_DISTANCE := GameConfig.DAY_CAMP_AGGRO_DISTANCE
@@ -31,13 +22,9 @@ var rng := RandomNumberGenerator.new()
 var camera: Camera2D
 var canvas_modulate: CanvasModulate
 var camp_light: PointLight2D
-var failure_panel: Control
-var failure_label: Label
-var hud_label: Label
-var objective_label: Label
-var selected_label: Label
-var message_label: Label
-var build_buttons: Array[Button] = []
+var hud := HudController.new()
+var effects := EffectsSystem.new()
+var survivor_system := SurvivorSystem.new()
 
 var phase := "day"
 var phase_time := DAY_SECONDS
@@ -74,9 +61,6 @@ var survivors: Array[Dictionary] = []
 var resources: Array[Dictionary] = []
 var buildings: Array[Dictionary] = []
 var zombies: Array[Dictionary] = []
-var floating_texts: Array[Dictionary] = []
-var attack_tracers: Array[Dictionary] = []
-var command_flashes: Array[Dictionary] = []
 
 func _ready() -> void:
 	rng.randomize()
@@ -116,80 +100,7 @@ func _setup_camera() -> void:
 	add_child(camp_light)
 
 func _setup_ui() -> void:
-	var layer := CanvasLayer.new()
-	add_child(layer)
-
-	var root := VBoxContainer.new()
-	root.anchor_right = 1.0
-	root.offset_left = 14.0
-	root.offset_top = 12.0
-	root.offset_right = -14.0
-	root.add_theme_constant_override("separation", 6)
-	layer.add_child(root)
-
-	hud_label = Label.new()
-	hud_label.add_theme_font_size_override("font_size", 18)
-	root.add_child(hud_label)
-
-	objective_label = Label.new()
-	objective_label.add_theme_font_size_override("font_size", 15)
-	root.add_child(objective_label)
-
-	selected_label = Label.new()
-	selected_label.add_theme_font_size_override("font_size", 15)
-	root.add_child(selected_label)
-
-	var build_bar := HBoxContainer.new()
-	build_bar.add_theme_constant_override("separation", 8)
-	root.add_child(build_bar)
-	_add_build_button(build_bar, "1 墙", "wall")
-	_add_build_button(build_bar, "2 塔", "tower")
-	_add_build_button(build_bar, "3 避难所", "shelter")
-
-	message_label = Label.new()
-	message_label.add_theme_font_size_override("font_size", 16)
-	root.add_child(message_label)
-
-	failure_panel = ColorRect.new()
-	failure_panel.color = Color(0.02, 0.02, 0.025, 0.82)
-	failure_panel.anchor_right = 1.0
-	failure_panel.anchor_bottom = 1.0
-	failure_panel.visible = false
-	layer.add_child(failure_panel)
-
-	var failure_box := VBoxContainer.new()
-	failure_box.anchor_left = 0.5
-	failure_box.anchor_top = 0.5
-	failure_box.anchor_right = 0.5
-	failure_box.anchor_bottom = 0.5
-	failure_box.offset_left = -360.0
-	failure_box.offset_top = -120.0
-	failure_box.offset_right = 360.0
-	failure_box.offset_bottom = 120.0
-	failure_box.alignment = BoxContainer.ALIGNMENT_CENTER
-	failure_box.add_theme_constant_override("separation", 16)
-	failure_panel.add_child(failure_box)
-
-	failure_label = Label.new()
-	failure_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	failure_label.add_theme_font_size_override("font_size", 32)
-	failure_box.add_child(failure_label)
-
-	var restart_label := Label.new()
-	restart_label.text = "Press R to restart this region"
-	restart_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	restart_label.add_theme_font_size_override("font_size", 18)
-	failure_box.add_child(restart_label)
-
-func _add_build_button(parent: HBoxContainer, text: String, kind: String) -> void:
-	var button := Button.new()
-	button.text = text
-	button.custom_minimum_size = Vector2(96, 34)
-	button.pressed.connect(func() -> void:
-		_set_build_mode(kind)
-	)
-	parent.add_child(button)
-	build_buttons.append(button)
+	hud.setup(self, Callable(self, "_set_build_mode"))
 
 func _start_region(index: int, survivor_count: int) -> void:
 	region_index = clamp(index, 0, REGIONS.size() - 1)
@@ -200,8 +111,7 @@ func _start_region(index: int, survivor_count: int) -> void:
 	wave_spawned = 0
 	wave_target = 0
 	game_over = false
-	if failure_panel:
-		failure_panel.visible = false
+	hud.hide_failure()
 	zombies.clear()
 	buildings.clear()
 	resources.clear()
@@ -264,8 +174,7 @@ func _maintain_day_roamers() -> void:
 
 func _process(delta: float) -> void:
 	if game_over:
-		_update_floating_texts(delta)
-		_update_command_flashes(delta)
+		effects.update(delta)
 		_update_ui()
 		queue_redraw()
 		return
@@ -274,9 +183,7 @@ func _process(delta: float) -> void:
 	_update_survivors(delta)
 	_update_buildings(delta)
 	_update_zombies(delta)
-	_update_floating_texts(delta)
-	_update_attack_tracers(delta)
-	_update_command_flashes(delta)
+	effects.update(delta)
 	_update_ui()
 	_check_failure()
 	queue_redraw()
@@ -366,176 +273,7 @@ func _spawn_zombie(direction: String, from_wave := true, roaming := false) -> vo
 	zombies.append(EntityFactory.make_zombie(pos, hp, damage, roaming, from_wave, texture, _random_wander_target(pos)))
 
 func _update_survivors(delta: float) -> void:
-	for i in range(survivors.size() - 1, -1, -1):
-		var s := survivors[i]
-		if s["hp"] <= 0.0:
-			if selected_survivor == i:
-				selected_survivor = -1
-			survivors.remove_at(i)
-			continue
-		s["command_lock"] = max(0.0, float(s.get("command_lock", 0.0)) - delta)
-
-		if s["task"] == "gather" and phase == "day":
-			_process_gather_task(s, delta)
-		elif s["task"] == "attack":
-			_process_attack_task(s, delta)
-		elif s["task"] == "attack_move":
-			_process_attack_move_task(s, delta)
-		elif s["task"] == "repair":
-			_process_repair_task(s, delta)
-		else:
-			_move_survivor_toward(s, s["target"], delta)
-			if s["task"] == "idle":
-				if not _auto_attack_nearest_zombie(s, delta):
-					_auto_repair_damaged_building(s)
-			elif phase == "night" and float(s["command_lock"]) <= 0.0:
-				_auto_attack_nearest_zombie(s, delta)
-
-		survivors[i] = s
-
-func _process_gather_task(s: Dictionary, delta: float) -> void:
-	var resource_index: int = int(s["resource"])
-	if resource_index < 0 or resource_index >= resources.size():
-		s["task"] = "idle"
-		s["command_lock"] = 0.0
-		return
-	var r: Dictionary = resources[resource_index]
-	_move_survivor_toward(s, r["pos"], delta)
-	if s["pos"].distance_to(r["pos"]) <= INTERACT_RANGE:
-		s["work_timer"] = float(s["work_timer"]) + delta
-		if s["work_timer"] >= 0.45:
-			s["work_timer"] = 0.0
-			var amount: int = min(3, int(r["amount"]))
-			r["amount"] = int(r["amount"]) - amount
-			stock[r["type"]] = int(stock[r["type"]]) + amount
-			_add_float_text("+%d %s" % [amount, r["type"]], r["pos"], RESOURCE_COLORS[r["type"]])
-			resources[resource_index] = r
-			if int(r["amount"]) <= 0:
-				resources.remove_at(resource_index)
-				s["task"] = "idle"
-				s["resource"] = -1
-				s["command_lock"] = 0.0
-
-func _process_attack_task(s: Dictionary, delta: float) -> void:
-	var enemy_index: int = int(s["attack"])
-	if enemy_index < 0 or enemy_index >= zombies.size():
-		s["task"] = "idle"
-		s["command_lock"] = 0.0
-		return
-	var z := zombies[enemy_index]
-	var distance: float = s["pos"].distance_to(z["pos"])
-	if distance < SURVIVOR_MELEE_RANGE * 1.35 and zombies.size() > 1:
-		_kite_away_from_zombie(s, z["pos"], delta)
-		_fire_at_zombie_without_chasing(s, enemy_index, delta)
-		return
-	if distance > SURVIVOR_RANGED_RANGE:
-		_move_survivor_toward(s, z["pos"], delta)
-		_fire_at_nearby_zombie(s, delta)
-		s["weapon"] = "bow"
-		return
-	s["work_timer"] = float(s["work_timer"]) + delta
-	if distance <= SURVIVOR_MELEE_RANGE:
-		s["weapon"] = "sword"
-		if s["work_timer"] >= SURVIVOR_MELEE_COOLDOWN:
-			s["work_timer"] = 0.0
-			z["hp"] = float(z["hp"]) - SURVIVOR_MELEE_DAMAGE
-			zombies[enemy_index] = z
-			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.12, "kind": "melee"})
-	else:
-		s["weapon"] = "bow"
-		if s["work_timer"] >= SURVIVOR_BOW_COOLDOWN:
-			s["work_timer"] = 0.0
-			z["hp"] = float(z["hp"]) - SURVIVOR_BOW_DAMAGE
-			zombies[enemy_index] = z
-			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.18, "kind": "arrow"})
-
-func _process_attack_move_task(s: Dictionary, delta: float) -> void:
-	_move_survivor_toward(s, s["target"], delta)
-	var enemy_index: int = int(s.get("attack", -1))
-	if enemy_index == -1 or enemy_index >= zombies.size() or s["pos"].distance_to(zombies[enemy_index]["pos"]) > SURVIVOR_RANGED_RANGE:
-		enemy_index = _nearest_zombie(s["pos"], SURVIVOR_RANGED_RANGE)
-		s["attack"] = enemy_index
-	if enemy_index != -1:
-		_fire_at_zombie_without_chasing(s, enemy_index, delta)
-	if s["pos"].distance_to(s["target"]) <= 7.0:
-		s["task"] = "idle"
-		s["attack"] = -1
-		s["command_lock"] = 0.0
-
-func _process_repair_task(s: Dictionary, delta: float) -> void:
-	var building_index: int = int(s.get("repair", -1))
-	if building_index < 0 or building_index >= buildings.size() or float(buildings[building_index]["hp"]) >= float(buildings[building_index]["max_hp"]):
-		s["task"] = "idle"
-		s["repair"] = -1
-		return
-	if _auto_attack_nearest_zombie(s, delta):
-		return
-	var b := buildings[building_index]
-	_move_survivor_toward(s, b["pos"], delta)
-	if s["pos"].distance_to(b["pos"]) <= SURVIVOR_REPAIR_RANGE:
-		s["work_timer"] = float(s["work_timer"]) + delta
-		if s["work_timer"] >= 0.55:
-			s["work_timer"] = 0.0
-			b["hp"] = min(float(b["max_hp"]), float(b["hp"]) + SURVIVOR_REPAIR_AMOUNT)
-			buildings[building_index] = b
-			_add_float_text("+repair", b["pos"] + Vector2(0, -42), Color("#81c784"))
-
-func _kite_away_from_zombie(s: Dictionary, threat_pos: Vector2, delta: float) -> void:
-	var away: Vector2 = s["pos"] - threat_pos
-	if away.length() > 1.0:
-		var target: Vector2 = s["pos"] + away.normalized() * 120.0
-		_move_survivor_toward(s, target, delta)
-
-func _fire_at_nearby_zombie(s: Dictionary, delta: float) -> bool:
-	var enemy_index: int = _nearest_zombie(s["pos"], SURVIVOR_RANGED_RANGE)
-	if enemy_index == -1:
-		return false
-	_fire_at_zombie_without_chasing(s, enemy_index, delta)
-	return true
-
-func _fire_at_zombie_without_chasing(s: Dictionary, enemy_index: int, delta: float) -> void:
-	if enemy_index < 0 or enemy_index >= zombies.size():
-		return
-	var z := zombies[enemy_index]
-	var distance: float = s["pos"].distance_to(z["pos"])
-	s["work_timer"] = float(s["work_timer"]) + delta
-	if distance <= SURVIVOR_MELEE_RANGE:
-		s["weapon"] = "sword"
-		if s["work_timer"] >= SURVIVOR_MELEE_COOLDOWN:
-			s["work_timer"] = 0.0
-			z["hp"] = float(z["hp"]) - SURVIVOR_MELEE_DAMAGE
-			zombies[enemy_index] = z
-			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.12, "kind": "melee"})
-	elif distance <= SURVIVOR_RANGED_RANGE:
-		s["weapon"] = "bow"
-		if s["work_timer"] >= SURVIVOR_BOW_COOLDOWN:
-			s["work_timer"] = 0.0
-			z["hp"] = float(z["hp"]) - SURVIVOR_BOW_DAMAGE
-			zombies[enemy_index] = z
-			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.18, "kind": "arrow"})
-
-func _auto_attack_nearest_zombie(s: Dictionary, delta: float) -> bool:
-	var enemy_index := _nearest_zombie(s["pos"], SURVIVOR_RANGED_RANGE)
-	if enemy_index == -1:
-		return false
-	s["task"] = "attack"
-	s["attack"] = enemy_index
-	_process_attack_task(s, delta)
-	return true
-
-func _auto_repair_damaged_building(s: Dictionary) -> bool:
-	var building_index: int = _nearest_damaged_building(s["pos"], 520.0)
-	if building_index == -1:
-		return false
-	s["task"] = "repair"
-	s["repair"] = building_index
-	s["work_timer"] = 0.0
-	return true
-
-func _move_survivor_toward(s: Dictionary, target: Vector2, delta: float) -> void:
-	var offset: Vector2 = target - s["pos"]
-	if offset.length() > 5.0:
-		s["pos"] += offset.normalized() * SURVIVOR_SPEED * delta
+	selected_survivor = survivor_system.update(survivors, resources, zombies, buildings, stock, effects, phase, selected_survivor, delta)
 
 func _update_buildings(delta: float) -> void:
 	for i in range(buildings.size() - 1, -1, -1):
@@ -556,7 +294,7 @@ func _update_buildings(delta: float) -> void:
 					b["angle"] = aim.angle()
 					zombies[enemy_index]["hp"] = float(zombies[enemy_index]["hp"]) - float(BUILDINGS["tower"]["damage"])
 					b["cooldown"] = float(BUILDINGS["tower"]["cooldown"])
-					attack_tracers.append({"from": b["pos"], "to": zombies[enemy_index]["pos"], "life": 0.16})
+					effects.add_attack_tracer(b["pos"], zombies[enemy_index]["pos"], 0.16)
 					_add_float_text("塔射击", b["pos"] + Vector2(0, -36), Color("#ffd54f"))
 		if b["kind"] == "core":
 			base_hp = float(b["hp"])
@@ -652,9 +390,6 @@ func _apply_zombie_damage(target: Dictionary, damage: float) -> void:
 
 func _nearest_zombie(pos: Vector2, max_range: float) -> int:
 	return SpatialQueries.nearest_zombie(zombies, pos, max_range)
-
-func _nearest_damaged_building(pos: Vector2, max_range: float) -> int:
-	return SpatialQueries.nearest_damaged_building(buildings, pos, max_range)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -861,10 +596,7 @@ func _trigger_failure(reason: String) -> void:
 	build_mode = ""
 	selected_survivor = -1
 	selected_building = -1
-	if failure_panel:
-		failure_panel.visible = true
-	if failure_label:
-		failure_label.text = "FAILED\n%s" % reason
+	hud.show_failure(reason)
 	_show_message("任务失败。按 R 重开当前地区。", 999.0)
 
 func _survivor_at(pos: Vector2) -> int:
@@ -879,31 +611,11 @@ func _zombie_at(pos: Vector2) -> int:
 func _building_at(pos: Vector2) -> int:
 	return SpatialQueries.building_at(buildings, pos)
 
-func _update_floating_texts(delta: float) -> void:
-	for i in range(floating_texts.size() - 1, -1, -1):
-		floating_texts[i]["life"] = float(floating_texts[i]["life"]) - delta
-		floating_texts[i]["pos"] = floating_texts[i]["pos"] + Vector2(0, -24.0 * delta)
-		if float(floating_texts[i]["life"]) <= 0.0:
-			floating_texts.remove_at(i)
-
-func _update_attack_tracers(delta: float) -> void:
-	for i in range(attack_tracers.size() - 1, -1, -1):
-		attack_tracers[i]["life"] = float(attack_tracers[i]["life"]) - delta
-		if float(attack_tracers[i]["life"]) <= 0.0:
-			attack_tracers.remove_at(i)
-
-func _update_command_flashes(delta: float) -> void:
-	for i in range(command_flashes.size() - 1, -1, -1):
-		command_flashes[i]["life"] = float(command_flashes[i]["life"]) - delta
-		command_flashes[i]["radius"] = float(command_flashes[i]["radius"]) + 34.0 * delta
-		if float(command_flashes[i]["life"]) <= 0.0:
-			command_flashes.remove_at(i)
-
 func _add_float_text(text: String, pos: Vector2, color: Color) -> void:
-	floating_texts.append({"text": text, "pos": pos, "color": color, "life": 1.1})
+	effects.add_float_text(text, pos, color)
 
 func _add_command_flash(pos: Vector2, color: Color, radius: float, text: String) -> void:
-	command_flashes.append({"pos": pos, "color": color, "radius": radius, "text": text, "life": 0.55})
+	effects.add_command_flash(pos, color, radius, text)
 
 func _show_message(text: String, duration: float) -> void:
 	message = text
@@ -912,7 +624,7 @@ func _show_message(text: String, duration: float) -> void:
 func _update_ui() -> void:
 	message_time = max(0.0, message_time - get_process_delta_time())
 	var region: Dictionary = REGIONS[region_index]
-	hud_label.text = "地区 %d/%d：%s | 第%d天 | %s %.0fs | 木材 %d 废料 %d 食物 %d | 幸存者 %d | 核心 %.0f/%.0f" % [
+	var hud_text := "地区 %d/%d：%s | 第%d天 | %s %.0fs | 木材 %d 废料 %d 食物 %d | 幸存者 %d | 核心 %.0f/%.0f" % [
 		region_index + 1,
 		REGIONS.size(),
 		region["name"],
@@ -926,11 +638,8 @@ func _update_ui() -> void:
 		max(0.0, base_hp),
 		base_max_hp,
 	]
-	objective_label.text = _objective_text(region)
-	selected_label.text = _selected_text()
-	message_label.text = message if message_time > 0.0 else ""
-	for button in build_buttons:
-		button.disabled = phase == "night"
+	hud.set_texts(hud_text, _objective_text(region), _selected_text(), message if message_time > 0.0 else "")
+	hud.set_build_disabled(phase == "night")
 
 func _objective_text(region: Dictionary) -> String:
 	var counts := _building_counts()
@@ -1049,7 +758,7 @@ func _draw_buildings() -> void:
 			draw_circle(b["pos"], 24.0, Color("#ef5350"))
 
 func _draw_attack_tracers() -> void:
-	for tracer in attack_tracers:
+	for tracer in effects.attack_tracers:
 		var alpha: float = clamp(float(tracer["life"]) / 0.16, 0.0, 1.0)
 		if tracer.get("kind", "tower") == "melee":
 			draw_line(tracer["from"], tracer["to"], Color(0.9, 0.95, 1.0, alpha), 8.0)
@@ -1060,7 +769,7 @@ func _draw_attack_tracers() -> void:
 
 func _draw_command_flashes() -> void:
 	var font := ThemeDB.fallback_font
-	for flash in command_flashes:
+	for flash in effects.command_flashes:
 		var alpha: float = clamp(float(flash["life"]) / 0.55, 0.0, 1.0)
 		var color: Color = flash["color"]
 		color.a = alpha
@@ -1122,7 +831,7 @@ func _draw_build_preview() -> void:
 
 func _draw_floating_texts() -> void:
 	var font := ThemeDB.fallback_font
-	for t in floating_texts:
+	for t in effects.floating_texts:
 		var color: Color = t["color"]
 		color.a = clamp(float(t["life"]), 0.0, 1.0)
 		draw_string(font, t["pos"], t["text"], HORIZONTAL_ALIGNMENT_CENTER, -1.0, 15, color)

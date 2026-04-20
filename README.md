@@ -28,9 +28,12 @@ Daytime is for gathering, building, healing, and expanding the camp inside the m
 - `scripts/main.gd`: scene orchestration, current gameplay loop, UI, rendering, and command flow.
 - `scripts/core/game_config.gd`: shared tuning values, building definitions, region goals, and resource colors.
 - `scripts/core/entity_factory.gd`: creates survivor, zombie, building, and starting camp data.
+- `scripts/systems/survivor_system.gd`: survivor gathering, combat, kiting, and repair AI.
+- `scripts/systems/effects_system.gd`: floating text, attack tracers, and command flash state.
 - `scripts/systems/spatial_queries.gd`: selection hit tests and nearest-target queries.
+- `scripts/ui/hud_controller.gd`: HUD creation, build buttons, selected target text, and failure overlay.
 
-This is the first refactor pass out of the single-script prototype. The next good split is moving survivor AI, zombie AI, building/tower logic, wave spawning, and HUD rendering into their own systems.
+This is an incremental refactor out of the single-script prototype. The next good split is moving zombie AI, building/tower logic, wave spawning, and world rendering into their own systems.
 
 ## Asset Credits
 
