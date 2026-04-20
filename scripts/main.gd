@@ -409,6 +409,8 @@ func _update_survivors(delta: float) -> void:
 			_process_gather_task(s, delta)
 		elif s["task"] == "attack":
 			_process_attack_task(s, delta)
+		elif s["task"] == "attack_move":
+			_process_attack_move_task(s, delta)
 		else:
 			_move_survivor_toward(s, s["target"], delta)
 			if s["task"] == "idle" or (phase == "night" and float(s["command_lock"]) <= 0.0):
@@ -460,6 +462,40 @@ func _process_attack_task(s: Dictionary, delta: float) -> void:
 			zombies[enemy_index] = z
 			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.12, "kind": "melee"})
 	else:
+		s["weapon"] = "bow"
+		if s["work_timer"] >= SURVIVOR_BOW_COOLDOWN:
+			s["work_timer"] = 0.0
+			z["hp"] = float(z["hp"]) - SURVIVOR_BOW_DAMAGE
+			zombies[enemy_index] = z
+			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.18, "kind": "arrow"})
+
+func _process_attack_move_task(s: Dictionary, delta: float) -> void:
+	_move_survivor_toward(s, s["target"], delta)
+	var enemy_index: int = int(s.get("attack", -1))
+	if enemy_index == -1 or enemy_index >= zombies.size() or s["pos"].distance_to(zombies[enemy_index]["pos"]) > SURVIVOR_RANGED_RANGE:
+		enemy_index = _nearest_zombie(s["pos"], SURVIVOR_RANGED_RANGE)
+		s["attack"] = enemy_index
+	if enemy_index != -1:
+		_fire_at_zombie_without_chasing(s, enemy_index, delta)
+	if s["pos"].distance_to(s["target"]) <= 7.0:
+		s["task"] = "idle"
+		s["attack"] = -1
+		s["command_lock"] = 0.0
+
+func _fire_at_zombie_without_chasing(s: Dictionary, enemy_index: int, delta: float) -> void:
+	if enemy_index < 0 or enemy_index >= zombies.size():
+		return
+	var z := zombies[enemy_index]
+	var distance: float = s["pos"].distance_to(z["pos"])
+	s["work_timer"] = float(s["work_timer"]) + delta
+	if distance <= SURVIVOR_MELEE_RANGE:
+		s["weapon"] = "sword"
+		if s["work_timer"] >= SURVIVOR_MELEE_COOLDOWN:
+			s["work_timer"] = 0.0
+			z["hp"] = float(z["hp"]) - SURVIVOR_MELEE_DAMAGE
+			zombies[enemy_index] = z
+			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.12, "kind": "melee"})
+	elif distance <= SURVIVOR_RANGED_RANGE:
 		s["weapon"] = "bow"
 		if s["work_timer"] >= SURVIVOR_BOW_COOLDOWN:
 			s["work_timer"] = 0.0
@@ -680,13 +716,13 @@ func _handle_right_click(world_pos: Vector2) -> void:
 		survivors[selected_survivor]["command_lock"] = 0.0
 		_show_message("幸存者攻击目标。", 2.0)
 	else:
-		survivors[selected_survivor]["task"] = "move"
+		survivors[selected_survivor]["task"] = "attack_move"
 		survivors[selected_survivor]["target"] = world_pos
 		survivors[selected_survivor]["resource"] = -1
-		survivors[selected_survivor]["attack"] = -1
+		survivors[selected_survivor]["attack"] = _nearest_zombie(survivors[selected_survivor]["pos"], SURVIVOR_RANGED_RANGE)
 		survivors[selected_survivor]["work_timer"] = 0.0
 		survivors[selected_survivor]["command_lock"] = MANUAL_COMMAND_GRACE
-		_show_message("幸存者移动到指定位置。", 2.0)
+		_show_message("幸存者移动到指定位置，并边走边射击。", 2.0)
 
 func _set_build_mode(kind: String) -> void:
 	build_mode = kind
