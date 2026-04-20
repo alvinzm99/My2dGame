@@ -7,8 +7,9 @@ The player builds a camp in one region, survives escalating night attacks, compl
 ## Controls
 
 - `WASD`: move the camera
+- Hold left mouse and drag: pan the camera
 - Mouse wheel: zoom camera
-- Left click survivor: select survivor
+- Left click survivor/building: select it
 - Right click ground/resource/enemy: command selected survivor
 - `1`: place wall
 - `2`: place watchtower
@@ -20,7 +21,7 @@ The player builds a camp in one region, survives escalating night attacks, compl
 
 ## Prototype Loop
 
-Daytime is for gathering, building, healing, and expanding the camp inside the marked build area. Each region starts with a small walled camp and a basic watchtower, then the player expands from there. Wild zombies roam outside during the day and only attack when they get close to the camp, buildings, or survivors. Nighttime spawns larger zombie waves from all sides, with strength increasing by region and night. Towers rotate toward nearby zombies and fire automatically; survivors can gather by day and fight by night.
+Daytime is for gathering, building, healing, and expanding the camp inside the marked build area. Each region starts with a small walled camp and a basic watchtower, then the player expands from there. Wild zombies roam outside during the day and only attack when they get close to the camp, buildings, or survivors. Nighttime spawns larger zombie waves from all sides, with strength increasing by region and night. Towers rotate toward nearby zombies and fire automatically. Survivors use bows at range, switch to blades in melee, and can be commanded with right click.
 
 ## Asset Credits
 

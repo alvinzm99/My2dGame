@@ -8,6 +8,13 @@ const SURVIVOR_SPEED := 135.0
 const ZOMBIE_SPEED := 72.0
 const INTERACT_RANGE := 36.0
 const BUILD_GRID := 48.0
+const CLICK_DRAG_THRESHOLD := 8.0
+const SURVIVOR_RANGED_RANGE := 245.0
+const SURVIVOR_MELEE_RANGE := 58.0
+const SURVIVOR_BOW_DAMAGE := 10.0
+const SURVIVOR_MELEE_DAMAGE := 16.0
+const SURVIVOR_BOW_COOLDOWN := 0.9
+const SURVIVOR_MELEE_COOLDOWN := 0.55
 const STARTING_WALL_RADIUS := 250.0
 const DAY_ROAMER_MIN_DISTANCE := 920.0
 const DAY_CAMP_AGGRO_DISTANCE := 190.0
@@ -95,11 +102,18 @@ var message_time := 5.0
 
 var survivor_texture: Texture2D
 var zombie_texture: Texture2D
+var bow_texture: Texture2D
+var sword_texture: Texture2D
 var stock := {"wood": 80, "scrap": 55, "food": 45}
 var base_max_hp := 900.0
 var base_hp := base_max_hp
 var build_mode := ""
 var selected_survivor := -1
+var selected_building := -1
+var left_mouse_down := false
+var dragging_camera := false
+var left_drag_start_screen := Vector2.ZERO
+var left_drag_total := 0.0
 
 var survivors: Array[Dictionary] = []
 var resources: Array[Dictionary] = []
@@ -112,6 +126,8 @@ func _ready() -> void:
 	rng.randomize()
 	survivor_texture = load("res://assets/placeholder/survivor.svg")
 	zombie_texture = load("res://assets/placeholder/zombie.svg")
+	bow_texture = load("res://assets/placeholder/bow.svg")
+	sword_texture = load("res://assets/placeholder/sword.svg")
 	_setup_camera()
 	_setup_ui()
 	_start_region(0, 3)
@@ -184,6 +200,7 @@ func _start_region(index: int, survivor_count: int) -> void:
 	survivors.clear()
 	base_hp = base_max_hp
 	selected_survivor = -1
+	selected_building = -1
 	build_mode = ""
 	_spawn_initial_camp(survivor_count)
 	_spawn_resources()
@@ -206,6 +223,7 @@ func _spawn_initial_camp(survivor_count: int) -> void:
 			"carry_type": "",
 			"carry": 0,
 			"work_timer": 0.0,
+			"weapon": "bow",
 		})
 
 func _spawn_starting_perimeter() -> void:
@@ -390,8 +408,7 @@ func _update_survivors(delta: float) -> void:
 			_process_attack_task(s, delta)
 		else:
 			_move_survivor_toward(s, s["target"], delta)
-			if phase == "night":
-				_auto_attack_nearest_zombie(s, delta)
+			_auto_attack_nearest_zombie(s, delta)
 
 		survivors[i] = s
 
@@ -422,16 +439,29 @@ func _process_attack_task(s: Dictionary, delta: float) -> void:
 		s["task"] = "idle"
 		return
 	var z := zombies[enemy_index]
-	_move_survivor_toward(s, z["pos"], delta)
-	if s["pos"].distance_to(z["pos"]) <= 72.0:
-		s["work_timer"] = float(s["work_timer"]) + delta
-		if s["work_timer"] >= 0.65:
+	var distance: float = s["pos"].distance_to(z["pos"])
+	if distance > SURVIVOR_RANGED_RANGE:
+		_move_survivor_toward(s, z["pos"], delta)
+		s["weapon"] = "bow"
+		return
+	s["work_timer"] = float(s["work_timer"]) + delta
+	if distance <= SURVIVOR_MELEE_RANGE:
+		s["weapon"] = "sword"
+		if s["work_timer"] >= SURVIVOR_MELEE_COOLDOWN:
 			s["work_timer"] = 0.0
-			z["hp"] = float(z["hp"]) - 12.0
+			z["hp"] = float(z["hp"]) - SURVIVOR_MELEE_DAMAGE
 			zombies[enemy_index] = z
+			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.12, "kind": "melee"})
+	else:
+		s["weapon"] = "bow"
+		if s["work_timer"] >= SURVIVOR_BOW_COOLDOWN:
+			s["work_timer"] = 0.0
+			z["hp"] = float(z["hp"]) - SURVIVOR_BOW_DAMAGE
+			zombies[enemy_index] = z
+			attack_tracers.append({"from": s["pos"], "to": z["pos"], "life": 0.18, "kind": "arrow"})
 
 func _auto_attack_nearest_zombie(s: Dictionary, delta: float) -> void:
-	var enemy_index := _nearest_zombie(s["pos"], 115.0)
+	var enemy_index := _nearest_zombie(s["pos"], SURVIVOR_RANGED_RANGE)
 	if enemy_index == -1:
 		return
 	s["task"] = "attack"
@@ -447,6 +477,8 @@ func _update_buildings(delta: float) -> void:
 	for i in range(buildings.size() - 1, -1, -1):
 		var b := buildings[i]
 		if b["hp"] <= 0.0:
+			if selected_building == i:
+				selected_building = -1
 			if b["kind"] == "core":
 				_show_message("营地核心被摧毁。按 R 重开当前地区。", 999.0)
 			buildings.remove_at(i)
@@ -565,15 +597,32 @@ func _nearest_zombie(pos: Vector2, max_range: float) -> int:
 	return best
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP and event.pressed:
 			camera.zoom = (camera.zoom * 0.9).clamp(Vector2(0.45, 0.45), Vector2(1.6, 1.6))
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN and event.pressed:
 			camera.zoom = (camera.zoom * 1.1).clamp(Vector2(0.45, 0.45), Vector2(1.6, 1.6))
 		elif event.button_index == MOUSE_BUTTON_LEFT:
-			_handle_left_click(get_global_mouse_position())
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			if event.pressed:
+				left_mouse_down = true
+				dragging_camera = false
+				left_drag_start_screen = event.position
+				left_drag_total = 0.0
+			else:
+				if left_mouse_down and not dragging_camera:
+					_handle_left_click(get_global_mouse_position())
+				left_mouse_down = false
+				dragging_camera = false
+		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			_handle_right_click(get_global_mouse_position())
+	elif event is InputEventMouseMotion and left_mouse_down:
+		left_drag_total += event.relative.length()
+		if left_drag_total >= CLICK_DRAG_THRESHOLD:
+			dragging_camera = true
+		if dragging_camera:
+			camera.position -= event.relative * camera.zoom
+			camera.position.x = clamp(camera.position.x, -MAP_HALF_SIZE.x, MAP_HALF_SIZE.x)
+			camera.position.y = clamp(camera.position.y, -MAP_HALF_SIZE.y, MAP_HALF_SIZE.y)
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_1:
@@ -597,9 +646,14 @@ func _handle_left_click(world_pos: Vector2) -> void:
 	if build_mode != "":
 		_place_building(world_pos)
 		return
+	selected_building = -1
 	selected_survivor = _survivor_at(world_pos)
 	if selected_survivor != -1:
 		_show_message("已选择幸存者。右键资源、敌人或地面下达命令。", 2.5)
+		return
+	selected_building = _building_at(world_pos)
+	if selected_building != -1:
+		_show_message("已选择建筑。墙和塔会自动防守，继续建造可以扩展营地。", 2.5)
 
 func _handle_right_click(world_pos: Vector2) -> void:
 	if selected_survivor == -1 or selected_survivor >= survivors.size():
@@ -651,6 +705,7 @@ func _place_building(world_pos: Vector2) -> void:
 			"carry_type": "",
 			"carry": 0,
 			"work_timer": 0.0,
+			"weapon": "bow",
 		})
 		_show_message("避难所接纳了一名新幸存者。", 4.0)
 
@@ -806,9 +861,13 @@ func _selected_text() -> String:
 	if build_mode != "":
 		return "建造模式：%s，左键放置，Esc取消" % BUILDINGS[build_mode]["name"]
 	if selected_survivor == -1 or selected_survivor >= survivors.size():
-		return "未选择幸存者"
+		if selected_building != -1 and selected_building < buildings.size():
+			var b: Dictionary = buildings[selected_building]
+			var building_name: String = "营地核心" if b["kind"] == "core" else BUILDINGS[b["kind"]]["name"]
+			return "选中建筑：%s | 生命 %.0f/%.0f" % [building_name, b["hp"], b["max_hp"]]
+		return "未选择目标。左键点选，按住左键拖拽视野，右键下命令。"
 	var s := survivors[selected_survivor]
-	return "选中幸存者：生命 %.0f | 任务 %s | 按 H 消耗食物回血" % [s["hp"], s["task"]]
+	return "选中幸存者：生命 %.0f | 任务 %s | 武器 %s | 按 H 消耗食物回血" % [s["hp"], s["task"], "弓" if s.get("weapon", "bow") == "bow" else "刀"]
 
 func _cost_text(cost: Dictionary) -> String:
 	var parts: Array[String] = []
@@ -872,11 +931,14 @@ func _draw_resources() -> void:
 		draw_string(ThemeDB.fallback_font, pos + Vector2(-22, 34), "%s %d" % [r["type"], r["amount"]], HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, Color("#dfe8df"))
 
 func _draw_buildings() -> void:
-	for b in buildings:
+	for i in buildings.size():
+		var b := buildings[i]
 		var half: Vector2 = b["size"] * 0.5
 		var color: Color = Color("#90a4ae") if b["kind"] == "core" else BUILDINGS[b["kind"]]["color"]
 		draw_rect(Rect2(b["pos"] - half, b["size"]), color)
 		draw_rect(Rect2(b["pos"] - half, b["size"]), Color("#151515"), false, 3.0)
+		if i == selected_building:
+			draw_rect(Rect2(b["pos"] - half - Vector2(5, 5), b["size"] + Vector2(10, 10)), Color("#fff176"), false, 4.0)
 		var hp_ratio: float = clamp(float(b["hp"]) / float(b["max_hp"]), 0.0, 1.0)
 		draw_rect(Rect2(b["pos"] + Vector2(-half.x, -half.y - 12), Vector2(b["size"].x * hp_ratio, 5)), Color("#66bb6a"))
 		if b["kind"] == "tower":
@@ -892,7 +954,12 @@ func _draw_buildings() -> void:
 func _draw_attack_tracers() -> void:
 	for tracer in attack_tracers:
 		var alpha: float = clamp(float(tracer["life"]) / 0.16, 0.0, 1.0)
-		draw_line(tracer["from"], tracer["to"], Color(1.0, 0.9, 0.25, alpha), 5.0)
+		if tracer.get("kind", "tower") == "melee":
+			draw_line(tracer["from"], tracer["to"], Color(0.9, 0.95, 1.0, alpha), 8.0)
+		elif tracer.get("kind", "tower") == "arrow":
+			draw_line(tracer["from"], tracer["to"], Color(0.76, 0.48, 0.2, alpha), 3.0)
+		else:
+			draw_line(tracer["from"], tracer["to"], Color(1.0, 0.9, 0.25, alpha), 5.0)
 
 func _draw_survivors() -> void:
 	for i in survivors.size():
@@ -905,7 +972,18 @@ func _draw_survivors() -> void:
 			draw_circle(pos, 17.0, Color("#42a5f5"))
 		var outline := Color("#fff176") if i == selected_survivor else Color("#0d1b2a")
 		draw_circle(pos, 25.0, outline, false, 3.0)
+		_draw_weapon_badge(pos, s.get("weapon", "bow"))
 		draw_line(s["pos"] + Vector2(-12, -22), s["pos"] + Vector2(-12 + 24.0 * (float(s["hp"]) / 100.0), -22), Color("#66bb6a"), 4.0)
+
+func _draw_weapon_badge(pos: Vector2, weapon: String) -> void:
+	var badge_rect := Rect2(pos + Vector2(9, -31), Vector2(22, 22))
+	draw_rect(badge_rect.grow(2), Color("#101820"))
+	if weapon == "sword" and sword_texture:
+		draw_texture_rect(sword_texture, badge_rect, false)
+	elif bow_texture:
+		draw_texture_rect(bow_texture, badge_rect, false)
+	else:
+		draw_circle(badge_rect.get_center(), 9.0, Color("#ffc107"))
 
 func _draw_zombies() -> void:
 	for z in zombies:
