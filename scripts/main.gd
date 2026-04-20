@@ -1,6 +1,7 @@
 extends Node2D
 
 const MAP_HALF_SIZE := Vector2(1800.0, 1200.0)
+const CAMP_RADIUS := 560.0
 const DAY_SECONDS := 55.0
 const NIGHT_SECONDS := 45.0
 const SURVIVOR_SPEED := 135.0
@@ -86,6 +87,8 @@ var spawn_timer := 0.0
 var message := "白天：选择幸存者，右键资源采集，数字键建造防线。"
 var message_time := 5.0
 
+var survivor_texture: Texture2D
+var zombie_texture: Texture2D
 var stock := {"wood": 80, "scrap": 55, "food": 45}
 var base_max_hp := 900.0
 var base_hp := base_max_hp
@@ -97,9 +100,12 @@ var resources: Array[Dictionary] = []
 var buildings: Array[Dictionary] = []
 var zombies: Array[Dictionary] = []
 var floating_texts: Array[Dictionary] = []
+var attack_tracers: Array[Dictionary] = []
 
 func _ready() -> void:
 	rng.randomize()
+	survivor_texture = load("res://assets/placeholder/survivor.svg")
+	zombie_texture = load("res://assets/placeholder/zombie.svg")
 	_setup_camera()
 	_setup_ui()
 	_start_region(0, 3)
@@ -202,6 +208,7 @@ func _make_building(kind: String, pos: Vector2) -> Dictionary:
 			"max_hp": base_max_hp,
 			"size": Vector2(86, 86),
 			"cooldown": 0.0,
+			"angle": 0.0,
 		}
 	var def: Dictionary = BUILDINGS[kind]
 	return {
@@ -211,6 +218,7 @@ func _make_building(kind: String, pos: Vector2) -> Dictionary:
 		"max_hp": float(def["hp"]),
 		"size": def["size"],
 		"cooldown": 0.0,
+		"angle": 0.0,
 	}
 
 func _spawn_resources() -> void:
@@ -236,6 +244,7 @@ func _process(delta: float) -> void:
 	_update_buildings(delta)
 	_update_zombies(delta)
 	_update_floating_texts(delta)
+	_update_attack_tracers(delta)
 	_update_ui()
 	queue_redraw()
 
@@ -393,8 +402,11 @@ func _update_buildings(delta: float) -> void:
 			if float(b["cooldown"]) <= 0.0:
 				var enemy_index := _nearest_zombie(b["pos"], float(BUILDINGS["tower"]["range"]))
 				if enemy_index != -1:
+					var aim: Vector2 = zombies[enemy_index]["pos"] - b["pos"]
+					b["angle"] = aim.angle()
 					zombies[enemy_index]["hp"] = float(zombies[enemy_index]["hp"]) - float(BUILDINGS["tower"]["damage"])
 					b["cooldown"] = float(BUILDINGS["tower"]["cooldown"])
+					attack_tracers.append({"from": b["pos"], "to": zombies[enemy_index]["pos"], "life": 0.16})
 					_add_float_text("塔射击", b["pos"] + Vector2(0, -36), Color("#ffd54f"))
 		if b["kind"] == "core":
 			base_hp = float(b["hp"])
@@ -478,6 +490,8 @@ func _input(event: InputEvent) -> void:
 			KEY_N:
 				if _region_complete():
 					_travel_to_next_region()
+			KEY_H:
+				_heal_selected_survivor()
 			KEY_R:
 				if _core_destroyed() or survivors.is_empty():
 					_start_region(region_index, 3)
@@ -516,6 +530,9 @@ func _place_building(world_pos: Vector2) -> void:
 	if pos.length() < 110.0:
 		_show_message("离营地核心太近。", 2.0)
 		return
+	if pos.length() > CAMP_RADIUS:
+		_show_message("只能在营地区域内建造。先守住当前营地，再去下一个地区。", 3.0)
+		return
 	if _building_at(pos) != -1:
 		_show_message("这里已经有建筑。", 2.0)
 		return
@@ -539,6 +556,21 @@ func _place_building(world_pos: Vector2) -> void:
 			"work_timer": 0.0,
 		})
 		_show_message("避难所接纳了一名新幸存者。", 4.0)
+
+func _heal_selected_survivor() -> void:
+	if selected_survivor == -1 or selected_survivor >= survivors.size():
+		_show_message("先选择一名幸存者，再按 H 使用食物治疗。", 2.5)
+		return
+	if int(stock["food"]) < 8:
+		_show_message("食物不足，治疗需要 8 食物。", 2.5)
+		return
+	if float(survivors[selected_survivor]["hp"]) >= 100.0:
+		_show_message("这名幸存者状态良好，不需要治疗。", 2.5)
+		return
+	stock["food"] = int(stock["food"]) - 8
+	survivors[selected_survivor]["hp"] = min(100.0, float(survivors[selected_survivor]["hp"]) + 35.0)
+	_add_float_text("+治疗", survivors[selected_survivor]["pos"], Color("#f8bbd0"))
+	_show_message("消耗 8 食物，为幸存者恢复生命。", 3.0)
 
 func _can_afford(cost: Dictionary) -> bool:
 	for key in cost.keys():
@@ -621,6 +653,12 @@ func _update_floating_texts(delta: float) -> void:
 		if float(floating_texts[i]["life"]) <= 0.0:
 			floating_texts.remove_at(i)
 
+func _update_attack_tracers(delta: float) -> void:
+	for i in range(attack_tracers.size() - 1, -1, -1):
+		attack_tracers[i]["life"] = float(attack_tracers[i]["life"]) - delta
+		if float(attack_tracers[i]["life"]) <= 0.0:
+			attack_tracers.remove_at(i)
+
 func _add_float_text(text: String, pos: Vector2, color: Color) -> void:
 	floating_texts.append({"text": text, "pos": pos, "color": color, "life": 1.1})
 
@@ -673,7 +711,7 @@ func _selected_text() -> String:
 	if selected_survivor == -1 or selected_survivor >= survivors.size():
 		return "未选择幸存者"
 	var s := survivors[selected_survivor]
-	return "选中幸存者：生命 %.0f | 任务 %s" % [s["hp"], s["task"]]
+	return "选中幸存者：生命 %.0f | 任务 %s | 按 H 消耗食物回血" % [s["hp"], s["task"]]
 
 func _cost_text(cost: Dictionary) -> String:
 	var parts: Array[String] = []
@@ -697,6 +735,7 @@ func _draw() -> void:
 	_draw_ground()
 	_draw_resources()
 	_draw_buildings()
+	_draw_attack_tracers()
 	_draw_survivors()
 	_draw_zombies()
 	_draw_build_preview()
@@ -711,12 +750,27 @@ func _draw_ground() -> void:
 	for y in range(int(-MAP_HALF_SIZE.y), int(MAP_HALF_SIZE.y) + 1, int(BUILD_GRID)):
 		draw_line(Vector2(-MAP_HALF_SIZE.x, y), Vector2(MAP_HALF_SIZE.x, y), grid_color, 1.0)
 	draw_rect(Rect2(-MAP_HALF_SIZE, MAP_HALF_SIZE * 2.0), Color("#1b2a22"), false, 8.0)
+	draw_circle(Vector2.ZERO, CAMP_RADIUS, Color(0.18, 0.36, 0.28, 0.22))
+	draw_circle(Vector2.ZERO, CAMP_RADIUS, Color("#8bc34a"), false, 4.0)
+	draw_circle(Vector2.ZERO, 120.0, Color(0.85, 0.2, 0.16, 0.08))
 
 func _draw_resources() -> void:
 	for r in resources:
 		var color: Color = RESOURCE_COLORS[r["type"]]
-		draw_circle(r["pos"], 20.0, color)
-		draw_circle(r["pos"], 20.0, Color("#101010"), false, 2.0)
+		var pos: Vector2 = r["pos"]
+		if r["type"] == "wood":
+			draw_rect(Rect2(pos + Vector2(-8, -24), Vector2(16, 44)), Color("#6d4c41"))
+			draw_circle(pos + Vector2(0, -22), 22.0, color)
+			draw_circle(pos + Vector2(0, -22), 22.0, Color("#1b2a22"), false, 2.0)
+		elif r["type"] == "scrap":
+			draw_rect(Rect2(pos + Vector2(-22, -14), Vector2(44, 28)), color)
+			draw_line(pos + Vector2(-18, -10), pos + Vector2(18, 10), Color("#37474f"), 4.0)
+			draw_line(pos + Vector2(-18, 10), pos + Vector2(18, -10), Color("#37474f"), 4.0)
+		else:
+			draw_circle(pos, 19.0, color)
+			draw_circle(pos + Vector2(7, -8), 7.0, Color("#ef5350"))
+			draw_line(pos + Vector2(3, -19), pos + Vector2(14, -28), Color("#66bb6a"), 3.0)
+		draw_string(ThemeDB.fallback_font, pos + Vector2(-22, 34), "%s %d" % [r["type"], r["amount"]], HORIZONTAL_ALIGNMENT_LEFT, -1.0, 12, Color("#dfe8df"))
 
 func _draw_buildings() -> void:
 	for b in buildings:
@@ -728,23 +782,41 @@ func _draw_buildings() -> void:
 		draw_rect(Rect2(b["pos"] + Vector2(-half.x, -half.y - 12), Vector2(b["size"].x * hp_ratio, 5)), Color("#66bb6a"))
 		if b["kind"] == "tower":
 			draw_circle(b["pos"], 10.0, Color("#ffd54f"))
+			var barrel_end: Vector2 = b["pos"] + Vector2.RIGHT.rotated(float(b["angle"])) * 38.0
+			draw_line(b["pos"], barrel_end, Color("#263238"), 7.0)
+			draw_circle(b["pos"], float(BUILDINGS["tower"]["range"]), Color(1.0, 0.84, 0.25, 0.06), false, 2.0)
 		elif b["kind"] == "shelter":
 			draw_line(b["pos"] + Vector2(-half.x, 0), b["pos"] + Vector2(half.x, 0), Color("#263238"), 2.0)
 		elif b["kind"] == "core":
 			draw_circle(b["pos"], 24.0, Color("#ef5350"))
 
+func _draw_attack_tracers() -> void:
+	for tracer in attack_tracers:
+		var alpha: float = clamp(float(tracer["life"]) / 0.16, 0.0, 1.0)
+		draw_line(tracer["from"], tracer["to"], Color(1.0, 0.9, 0.25, alpha), 5.0)
+
 func _draw_survivors() -> void:
 	for i in survivors.size():
 		var s := survivors[i]
-		var color := Color("#42a5f5") if i != selected_survivor else Color("#fff176")
-		draw_circle(s["pos"], 17.0, color)
-		draw_circle(s["pos"], 17.0, Color("#0d1b2a"), false, 2.0)
+		var pos: Vector2 = s["pos"]
+		var rect := Rect2(pos - Vector2(24, 24), Vector2(48, 48))
+		if survivor_texture:
+			draw_texture_rect(survivor_texture, rect, false)
+		else:
+			draw_circle(pos, 17.0, Color("#42a5f5"))
+		var outline := Color("#fff176") if i == selected_survivor else Color("#0d1b2a")
+		draw_circle(pos, 25.0, outline, false, 3.0)
 		draw_line(s["pos"] + Vector2(-12, -22), s["pos"] + Vector2(-12 + 24.0 * (float(s["hp"]) / 100.0), -22), Color("#66bb6a"), 4.0)
 
 func _draw_zombies() -> void:
 	for z in zombies:
-		draw_circle(z["pos"], 18.0, Color("#7cb342"))
-		draw_circle(z["pos"], 18.0, Color("#263300"), false, 2.0)
+		var pos: Vector2 = z["pos"]
+		var rect := Rect2(pos - Vector2(24, 24), Vector2(48, 48))
+		if zombie_texture:
+			draw_texture_rect(zombie_texture, rect, false)
+		else:
+			draw_circle(pos, 18.0, Color("#7cb342"))
+		draw_circle(pos, 25.0, Color("#263300"), false, 3.0)
 		var hp_ratio: float = clamp(float(z["hp"]) / float(z["max_hp"]), 0.0, 1.0)
 		draw_line(z["pos"] + Vector2(-14, -24), z["pos"] + Vector2(-14 + 28.0 * hp_ratio, -24), Color("#e53935"), 4.0)
 

@@ -13,13 +13,18 @@ The player builds a camp in one region, survives escalating night attacks, compl
 - `1`: place wall
 - `2`: place watchtower
 - `3`: place shelter
+- `H`: use food to heal the selected survivor
 - Left click while placing: build if resources are available
 - `Escape`: cancel building placement
 - `N`: travel to the next region after objectives are complete
 
 ## Prototype Loop
 
-Daytime is for gathering, building, and repairing the camp. Nighttime spawns a zombie wave from a changing direction, with strength increasing by region and night. Towers fire automatically; survivors can gather by day and fight by night.
+Daytime is for gathering, building, healing, and expanding the camp inside the marked camp area. Nighttime spawns a zombie wave from a changing direction, with strength increasing by region and night. Towers rotate toward nearby zombies and fire automatically; survivors can gather by day and fight by night.
+
+## Asset Credits
+
+Zombie and survivor placeholder portraits are from [OpenMoji](https://openmoji.org/) and are licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). They are temporary prototype art and can be replaced later by original project assets.
 
 ## Git Notes
 
