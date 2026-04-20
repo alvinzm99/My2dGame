@@ -82,6 +82,7 @@ const REGIONS := [
 var rng := RandomNumberGenerator.new()
 var camera: Camera2D
 var canvas_modulate: CanvasModulate
+var camp_light: PointLight2D
 var hud_label: Label
 var objective_label: Label
 var selected_label: Label
@@ -141,6 +142,13 @@ func _setup_camera() -> void:
 	canvas_modulate = CanvasModulate.new()
 	canvas_modulate.color = Color(1.0, 1.0, 1.0)
 	add_child(canvas_modulate)
+	camp_light = PointLight2D.new()
+	camp_light.position = Vector2.ZERO
+	camp_light.texture = load("res://assets/placeholder/camp_light.svg")
+	camp_light.texture_scale = 1.08
+	camp_light.energy = 0.0
+	camp_light.color = Color("#ffd36a")
+	add_child(camp_light)
 
 func _setup_ui() -> void:
 	var layer := CanvasLayer.new()
@@ -319,11 +327,13 @@ func _update_phase(delta: float) -> void:
 	phase_time -= delta
 	if phase == "day":
 		canvas_modulate.color = canvas_modulate.color.lerp(Color(1.0, 1.0, 0.93), delta * 1.5)
+		camp_light.energy = lerp(camp_light.energy, 0.0, delta * 3.0)
 		_maintain_day_roamers()
 		if phase_time <= 0.0:
 			_start_night()
 	else:
-		canvas_modulate.color = canvas_modulate.color.lerp(Color(0.22, 0.26, 0.38), delta * 1.8)
+		canvas_modulate.color = canvas_modulate.color.lerp(Color(0.12, 0.14, 0.22), delta * 1.8)
+		camp_light.energy = lerp(camp_light.energy, 2.6, delta * 3.0)
 		_update_wave_spawning(delta)
 		if phase_time <= 0.0 and zombies.is_empty() and wave_spawned >= wave_target:
 			_start_day()
